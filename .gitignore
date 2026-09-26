@@ -1,0 +1,62 @@
+# Engine binaries and downloaded weights (source code in these dirs IS committed)
+backend/engines/**/*.exe
+backend/engines/**/*.nnue
+backend/engines/**/*.pt
+backend/engines/**/*.pth
+
+# Downloaded HuggingFace explanation model (re-downloads on first use)
+backend/models/
+
+# Trained GM checkpoints (large binaries, regenerated via AdminTraining)
+backend/checkpoints/*.pt
+!backend/checkpoints/.gitkeep
+
+# PGN upload spillover when MongoDB is over budget (runtime files)
+backend/data/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Native extensions and packaging artefacts
+*.so
+*.egg
+*.egg-info/
+dist/
+.eggs/
+
+# Virtual environments (project venv lives at repo root)
+.venv/
+venv/
+env/
+
+# Environment secrets (examples stay committed)
+.env
+*.env.local
+!backend/.env.example
+!frontend/.env.example
+# Pytest and coverage artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+
+# Node dependencies
+node_modules/
+
+# CRA production build output
+frontend/build/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*

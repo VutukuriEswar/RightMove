@@ -1,0 +1,194 @@
+import { useEffect, useCallback, useRef } from 'react';
+import { useAuthStore } from '../store/authStore';
+import { useGameStore } from '../store/gameStore';
+import { createGameSocket } from '../lib/api';
+import { saveGameLog } from '../lib/chessUtils';
+
+export function useGameSocket(gameId) {
+  const token = useAuthStore((s) => s.token);
+  const { applyMove, updateClocks, setResult, setTrainingAnalysis } =
+    useGameStore();
+
+  const wsRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+
+  const connect = useCallback(() => {
+    if (!gameId || gameId === 'undefined' || !token) return;
+
+    const ws = createGameSocket(gameId, token);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+
+      switch (msg.type) {
+        case 'game_state':
+          if (msg.payload.fen) {
+            useGameStore.setState({ gameId, fen: msg.payload.fen });
+          } else {
+            useGameStore.setState({ gameId });
+          }
+          if (msg.payload.clocks) updateClocks(msg.payload.clocks);
+          if (msg.payload.result && msg.payload.result !== 'ongoing') setResult(msg.payload.result);
+          if (msg.payload.moves) {
+            const last = msg.payload.moves[msg.payload.moves.length - 1];
+            useGameStore.setState({
+              moves: msg.payload.moves,
+              ...(msg.payload.fen ? { fen: msg.payload.fen } : last?.fen ? { fen: last.fen } : {}),
+              ...(msg.payload.can_takeback !== undefined ? { canTakeback: msg.payload.can_takeback } : {}),
+              ...(msg.payload.can_redo !== undefined ? { canRedo: msg.payload.can_redo } : {}),
+              ...(msg.payload.bot_engine ? { botEngine: msg.payload.bot_engine } : {}),
+              ...(msg.payload.bot_depth ? { botDepth: msg.payload.bot_depth } : {}),
+              ...(msg.payload.maia_elo ? { maiaElo: msg.payload.maia_elo } : {}),
+            });
+          }
+          break;
+
+        case 'move':
+          applyMove(msg.payload);
+          useGameStore.setState((s) => ({
+            serverError: null,
+            canTakeback: s.mode === 'bot' ? true : s.canTakeback,
+            canRedo: false,
+          }));
+          break;
+
+        case 'takeback':
+        case 'redo': {
+          const { syncPosition } = useGameStore.getState();
+          syncPosition(msg.payload.fen, msg.payload.moves, {
+            canTakeback: msg.payload.can_takeback,
+            canRedo: msg.payload.can_redo,
+          });
+          useGameStore.setState({ serverError: null });
+          break;
+        }
+
+        case 'error':
+          console.error('[ws] Server error:', msg.payload?.msg);
+          useGameStore.setState({ serverError: msg.payload?.msg || 'Server error' });
+          break;
+
+        case 'clock':
+          updateClocks(msg.payload);
+          break;
+
+        case 'training_analysis':
+          setTrainingAnalysis(msg.payload);
+          break;
+
+        case 'human_move_feedback':
+          useGameStore.setState({ humanMoveFeedback: msg.payload });
+          break;
+
+        case 'game_over': {
+          const { result: gameResult, moves: gameMoves } = msg.payload;
+          setResult(gameResult);
+          if (gameMoves?.length) {
+            const state = useGameStore.getState();
+            saveGameLog(gameId, gameMoves, {
+              result:   gameResult,
+              mode:     state.mode,
+              opponent: state.mode === 'bot' ? 'Coach' : 'Opponent',
+              player_color: state.playerColor,
+            }).catch(console.error);
+          }
+          break;
+        }
+
+        case 'draw_offer':
+          useGameStore.setState({ pendingDrawOffer: msg.payload.from });
+          break;
+
+        default:
+          break;
+      }
+    };
+
+    ws.onclose = (event) => {
+      const { result } = useGameStore.getState();
+      if (!result && event.code < 4000) {
+        reconnectTimerRef.current = setTimeout(connect, 2000);
+      } else if (event.code >= 4000) {
+        console.error(`[ws] Disconnected with terminal code ${event.code}: ${event.reason}`);
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error('[ws] Game socket error:', err);
+    };
+  }, [gameId, token, applyMove, updateClocks, setResult, setTrainingAnalysis]);
+
+  useEffect(() => {
+    connect();
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    };
+  }, [connect]);
+
+  const sendReady = useCallback(() => {
+    const send = () => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'ready', payload: {} }));
+      }
+    };
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      send();
+    } else {
+      setTimeout(send, 400);
+    }
+  }, []);
+
+  const sendMove = useCallback((uci) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'move', payload: { uci } }));
+    }
+  }, []);
+
+  const sendResign = useCallback((losingColor) => {
+    const payload =
+      losingColor === 'white' || losingColor === 'black' ? { color: losingColor } : {};
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'resign', payload }));
+    }
+  }, []);
+
+  const sendDrawOffer = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'draw_offer', payload: {} }));
+    }
+  }, []);
+
+  const acceptDraw = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'draw_accept', payload: {} }));
+    }
+  }, []);
+
+  const sendTimeout = useCallback((losingColor) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'timeout', payload: { color: losingColor } }));
+    }
+  }, []);
+
+  const sendTakeback = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'takeback', payload: {} }));
+    }
+  }, []);
+
+  const sendRedo = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'redo', payload: {} }));
+    }
+  }, []);
+
+  const sendBotFirstMove = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'bot_first_move', payload: {} }));
+    }
+  }, []);
+
+  return { sendReady, sendMove, sendResign, sendDrawOffer, acceptDraw, sendTimeout, sendTakeback, sendRedo, sendBotFirstMove };
+}
