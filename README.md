@@ -1,5 +1,3 @@
-# RightMove — Full-Stack Chess Platform
-
 ## What is RightMove?
 
 RightMove is a comprehensive web application for playing, learning, and analyzing chess. It turns a simple board into a complete training environment where players can challenge human-like bots, get real-time coaching on every move, play friends online, review finished games with engine-grade analysis, and even train custom neural-network playing styles on their own PGN collections. The system features dual-engine integration, transparent move explanations, shareable game reports, and robust admin tooling.
