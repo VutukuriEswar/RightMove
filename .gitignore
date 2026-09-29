@@ -1,5 +1,4 @@
 # Engine binaries and downloaded weights (source code in these dirs IS committed)
-backend/engines/**/*.exe
 backend/engines/**/*.nnue
 backend/engines/**/*.pt
 backend/engines/**/*.pth
