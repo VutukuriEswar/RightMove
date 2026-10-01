@@ -45,7 +45,6 @@ class Settings(BaseSettings):
 
     hf_explanations_enabled: bool = True
     hf_local_model_id: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    hf_local_fallback: bool = False
 
 
 # Returns cached application settings

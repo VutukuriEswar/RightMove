@@ -313,8 +313,6 @@ def _get_local_pipe(model_id: str):
 def _hf_local_text(system: str, user: str) -> Optional[str]:
     from core import get_settings
     settings = get_settings()
-    if not settings.hf_local_fallback:
-        return None
     try:
         import os as _os
         from pathlib import Path as _Path
@@ -475,7 +473,7 @@ async def explain_move_rich(fen: str, player_move_san: str, best_move_san: str,
         return _remember(key, rule_fallback)
     try:
         import asyncio
-        text = await asyncio.to_thread(_hf_local_text, system, user)
+        text = await asyncio.wait_for(asyncio.to_thread(_hf_local_text, system, user), timeout=180)
         if text:
             text = _ensure_all_sections(
                 _strip_prompt_echo(_dedupe_echo(text)), rule_fallback["text"])
@@ -522,7 +520,7 @@ async def explain_position_rich(fen: str, verdict: str,
                                "source": "rule-based"})
     try:
         import asyncio
-        text = await asyncio.to_thread(_hf_local_text, system, user)
+        text = await asyncio.wait_for(asyncio.to_thread(_hf_local_text, system, user), timeout=180)
         if text:
             text = _ensure_all_sections(
                 _strip_prompt_echo(_dedupe_echo(text)), rule_text)

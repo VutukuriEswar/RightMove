@@ -236,9 +236,8 @@ There is no rating ladder. Profiles and history show **wins / draws / losses** c
 | `FRONTEND_URL` | Allowed CORS origin | `http://localhost:5173` |
 | `ENGINE_POOL_SIZE` | Concurrent engine instances per type | `2` |
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Seeded admin account | set in `.env` |
-| `HF_EXPLANATIONS_ENABLED` | Master switch for local AI explanations | `true` |
+| `HF_EXPLANATIONS_ENABLED` | Try local AI with 180s timeout, rule-based on error/timeout/off | `true` |
 | `HF_LOCAL_MODEL_ID` | Explanation model (auto-downloaded, ~3 GB) | `Qwen/Qwen2.5-1.5B-Instruct` |
-| `HF_LOCAL_FALLBACK` | Fall back to rule-based text when AI is off | `false` |
 
 **Frontend (`frontend/.env`, see `frontend/.env.example`):**
 
