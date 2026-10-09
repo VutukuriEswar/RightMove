@@ -558,27 +558,44 @@ async def accept_friend_request(body: FriendRequest, current_user: dict = Depend
     return {"status": "accepted"}
 
 # Lists friendships for current user
-@friends_router.get("/", response_model=list[FriendshipPublic])
+@friends_router.get("/")
 async def list_friends(current_user: dict = Depends(get_current_user)):
     db = get_db()
     user_id = str(current_user["_id"])
 
-    friendships = await db.friendships.find(
+    from bson import ObjectId
+
+    # Accepted friends (outgoing accepted)
+    accepted_friendships = await db.friendships.find(
         {"user_id": user_id, "status": "accepted"}
     ).to_list(100)
 
-    from bson import ObjectId
-    result = []
-    for f in friendships:
+    friends = []
+    for f in accepted_friendships:
         friend_doc = await db.users.find_one({"_id": ObjectId(f["friend_id"])})
         if friend_doc:
-            result.append(FriendshipPublic(
-                user_id=f["user_id"],
-                friend_id=f["friend_id"],
-                friend_username=friend_doc["username"] if friend_doc else "Unknown",
-                status=f["status"],
-            ))
-    return result
+            friends.append({
+                "user_id": f["user_id"],
+                "friend_id": f["friend_id"],
+                "username": friend_doc["username"],
+                "status": "accepted",
+            })
+
+    # Pending incoming requests (someone sent a request to current user)
+    incoming_pending = await db.friendships.find(
+        {"friend_id": user_id, "status": "pending"}
+    ).to_list(100)
+
+    pending_requests = []
+    for r in incoming_pending:
+        requester_doc = await db.users.find_one({"_id": ObjectId(r["user_id"])})
+        if requester_doc:
+            pending_requests.append({
+                "from_user": requester_doc["username"],
+                "user_id": r["user_id"],
+            })
+
+    return {"friends": friends, "pending_requests": pending_requests}
 
 # Section api/analysis
 

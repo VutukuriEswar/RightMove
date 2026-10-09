@@ -430,9 +430,16 @@ async def get_maia_move(fen: str, elo: int = 1500, model: str = "maia3-5m") -> s
                     lambda: chess.engine.SimpleEngine.popen_uci(cmd, env=_maia_env()),
                 )
                 _maia_elo = elo
-                logger.info(f"[maia] Spawned Maia-3 (elo={elo})")
+                logger.info(f"[maia] Spawned Maia-3 (elo={elo}), warming up...")
+                
+                # Warmup call so first move lag is eliminated
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _maia_instance.play(chess.Board(), chess.engine.Limit(nodes=1)),
+                )
+                logger.info(f"[maia] Warmup complete.")
             except Exception as e:
-                logger.error(f"[maia] Failed to spawn Maia-3: {e}")
+                logger.error(f"[maia] Failed to spawn/warmup Maia-3: {e}")
                 _maia_instance = None
                 raise
 

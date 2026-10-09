@@ -35,6 +35,10 @@ export default function GameRoom() {
     mode: gameMode,
     trainingMode,
     pendingDrawOffer,
+    drawOfferSent,
+    drawDeclinedMsg,
+    bothReady,
+    waitingForOpponent,
     hasTimer,
     serverError,
     initGame,
@@ -69,6 +73,7 @@ export default function GameRoom() {
   const [showReadyModal, setShowReadyModal] = useState(false);
   const [playersReady, setPlayersReady]     = useState(false);
   const [showGameOver, setShowGameOver]     = useState(false);
+  const [passPlayResignColor, setPassPlayResignColor] = useState(null); // 'white' | 'black' | null
 
   const [showResumeModal, setShowResumeModal] = useState(false);
   const [startingNew, setStartingNew]         = useState(false);
@@ -87,6 +92,14 @@ export default function GameRoom() {
       sendReady();
     }
   }, [moves.length, showReadyModal, showResumeModal, sendReady]);
+
+  // For multiplayer, when both players are ready, start the game
+  useEffect(() => {
+    if (bothReady && !playersReady) {
+      setPlayersReady(true);
+      setShowReadyModal(false);
+    }
+  }, [bothReady, playersReady]);
 
   useEffect(() => {
     if (gameMode !== 'pass_and_play' || !playersReady || !gameActive) return;
@@ -215,8 +228,13 @@ export default function GameRoom() {
   };
 
   const handleReady = () => {
-    setPlayersReady(true);
-    setShowReadyModal(false);
+    if (isPassAndPlay) {
+      setPlayersReady(true);
+      setShowReadyModal(false);
+    } else {
+      // For multiplayer, keep modal open with waiting state until both_ready
+      useGameStore.setState({ waitingForOpponent: true });
+    }
     sendReady();
   };
 
@@ -298,15 +316,24 @@ export default function GameRoom() {
         <p>
           {isPassAndPlay
             ? 'Ensure both players are seated. The clock will begin upon your command.'
-            : 'Take your position. The match is about to begin.'}
+            : waitingForOpponent
+              ? 'Waiting for your opponent to connect…'
+              : 'Take your position. The match is about to begin.'}
         </p>
-        <button
-          className="btn-neon interactive"
-          style={{ width: '100%', padding: '14px 0', fontSize: '0.9rem' }}
-          onClick={handleReady}
-        >
-          {isPassAndPlay ? '⚔ We Are Ready' : '⚔ I Am Ready'}
-        </button>
+        {!waitingForOpponent ? (
+          <button
+            className="btn-neon interactive"
+            style={{ width: '100%', padding: '14px 0', fontSize: '0.9rem' }}
+            onClick={handleReady}
+          >
+            {isPassAndPlay ? '⚔ We Are Ready' : '⚔ I Am Ready'}
+          </button>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', marginTop: '8px' }}>
+            <span className="spinner" />
+            <span style={{ fontSize: '0.85rem', opacity: 0.8 }}>Waiting for opponent…</span>
+          </div>
+        )}
       </div>
     </div>,
     document.body
@@ -344,12 +371,12 @@ export default function GameRoom() {
     document.body
   );
 
-  const drawModalPortal = pendingDrawOffer && pendingDrawOffer !== playerColor && gameActive && createPortal(
+  const drawModalPortal = pendingDrawOffer && gameActive && createPortal(
     <div className="ready-modal-overlay">
       <div className="ready-modal">
         <div className="ready-modal-crest">🤝</div>
         <h2>Draw Offered</h2>
-        <p>The opponent has offered a draw. Do you accept?</p>
+        <p>Your opponent has offered a draw. Do you accept?</p>
         <div style={{ display: 'flex', gap: '16px', width: '100%', marginTop: '10px' }}>
           <button
             className="btn-neon interactive"
@@ -546,18 +573,103 @@ export default function GameRoom() {
 
             <div className="game-controls">
               {gameActive ? (
-                <div className="action-buttons">
-                  <button
-                    className="btn-neon interactive"
-                    style={{ background: 'transparent', color: 'var(--royal-crimson, #8B2500)', borderColor: 'var(--royal-crimson, #8B2500)' }}
-                    onClick={resignAndClose}
-                  >Resign</button>
-                  <button
-                    className="btn-neon interactive"
-                    style={{ background: 'transparent', color: 'var(--royal-brass, #A67C52)', borderColor: 'var(--royal-brass, #A67C52)' }}
-                    onClick={sendDrawOffer}
-                  >Offer Draw</button>
-                </div>
+                isPassAndPlay ? (
+                  // Pass & Play: per-color resign buttons with inline confirm
+                  <div className="action-buttons" style={{ flexDirection: 'column', gap: '8px' }}>
+                    {/* White Resign */}
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        className="btn-neon interactive"
+                        style={{
+                          width: '100%',
+                          background: 'transparent',
+                          color: activeColor === 'white' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.35)',
+                          borderColor: activeColor === 'white' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.25)',
+                          cursor: activeColor === 'white' ? 'pointer' : 'not-allowed',
+                        }}
+                        disabled={activeColor !== 'white'}
+                        onClick={() => setPassPlayResignColor(passPlayResignColor === 'white' ? null : 'white')}
+                      >♔ White Resign</button>
+                      {passPlayResignColor === 'white' && (
+                        <div style={{
+                          position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0,
+                          background: 'var(--royal-parchment, #1a1208)', border: '1px solid var(--royal-crimson, #8B2500)',
+                          borderRadius: '8px', padding: '10px', zIndex: 50, textAlign: 'center',
+                          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+                        }}>
+                          <p style={{ fontSize: '0.8rem', marginBottom: '8px', color: 'var(--royal-ink, #f0e6c8)' }}>White really wants to resign?</p>
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                            <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'var(--royal-crimson)', color: '#fff', borderColor: 'var(--royal-crimson)' }}
+                              onClick={() => { setPassPlayResignColor(null); sendResign('white'); useGameStore.getState().setResult('black'); }}
+                            >Yes, Resign</button>
+                            <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'transparent' }}
+                              onClick={() => setPassPlayResignColor(null)}
+                            >Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {/* Black Resign */}
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        className="btn-neon interactive"
+                        style={{
+                          width: '100%',
+                          background: 'transparent',
+                          color: activeColor === 'black' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.35)',
+                          borderColor: activeColor === 'black' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.25)',
+                          cursor: activeColor === 'black' ? 'pointer' : 'not-allowed',
+                        }}
+                        disabled={activeColor !== 'black'}
+                        onClick={() => setPassPlayResignColor(passPlayResignColor === 'black' ? null : 'black')}
+                      >♚ Black Resign</button>
+                      {passPlayResignColor === 'black' && (
+                        <div style={{
+                          position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0,
+                          background: 'var(--royal-parchment, #1a1208)', border: '1px solid var(--royal-crimson, #8B2500)',
+                          borderRadius: '8px', padding: '10px', zIndex: 50, textAlign: 'center',
+                          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+                        }}>
+                          <p style={{ fontSize: '0.8rem', marginBottom: '8px', color: 'var(--royal-ink, #f0e6c8)' }}>Black really wants to resign?</p>
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                            <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'var(--royal-crimson)', color: '#fff', borderColor: 'var(--royal-crimson)' }}
+                              onClick={() => { setPassPlayResignColor(null); sendResign('black'); useGameStore.getState().setResult('white'); }}
+                            >Yes, Resign</button>
+                            <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'transparent' }}
+                              onClick={() => setPassPlayResignColor(null)}
+                            >Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  // Regular / Engine game
+                  <div className="action-buttons">
+                    <button
+                      className="btn-neon interactive"
+                      style={{ background: 'transparent', color: 'var(--royal-crimson, #8B2500)', borderColor: 'var(--royal-crimson, #8B2500)' }}
+                      onClick={resignAndClose}
+                    >Resign</button>
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        className="btn-neon interactive"
+                        style={{ background: 'transparent', color: 'var(--royal-brass, #A67C52)', borderColor: 'var(--royal-brass, #A67C52)', opacity: drawOfferSent ? 0.6 : 1 }}
+                        onClick={drawOfferSent ? undefined : sendDrawOffer}
+                        disabled={drawOfferSent}
+                        title={drawOfferSent ? 'Waiting for opponent to accept…' : 'Offer a draw'}
+                      >{drawOfferSent ? '🤝 Waiting…' : 'Offer Draw'}</button>
+                      {drawDeclinedMsg && (
+                        <div style={{
+                          position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
+                          background: '#1a1208', border: '1px solid var(--royal-crimson)', borderRadius: '6px',
+                          padding: '6px 12px', fontSize: '0.75rem', whiteSpace: 'nowrap', zIndex: 50,
+                          color: 'var(--royal-crimson)',
+                        }}>{drawDeclinedMsg}</div>
+                      )}
+                    </div>
+                  </div>
+                )
               ) : (
                 <div className="game-over-banner">
                   <h3>Game Over: {result}</h3>

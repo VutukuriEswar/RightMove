@@ -202,14 +202,6 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
 
       <div className="card play-card">
         <div className="play-btn-grid">
-          <button
-            className="btn-sm interactive"
-            onClick={handleFlip}
-            disabled={swapBusy || flipLocked}
-            title={flipLocked ? 'Locked — board view can only be chosen before the match starts' : 'Swap sides (pre-game only)'}
-          >
-            🔄 Flip board
-          </button>
           {showBotFirst && (
             <button className="btn-sm interactive" onClick={onBotFirst}>
               🤖 Bot starts
@@ -226,9 +218,6 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
             </>
           )}
         </div>
-        {flipLocked && (
-          <p className="coach-text" style={{ marginTop: '8px' }}>🔒 Locked — Flip board works pre-game only.</p>
-        )}
         {started && swapError && <p className="coach-text" style={{ color: 'var(--danger-t)' }}>{swapError}</p>}
       </div>
 

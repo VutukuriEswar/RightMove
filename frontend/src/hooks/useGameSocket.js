@@ -78,7 +78,17 @@ export function useGameSocket(gameId) {
           break;
 
         case 'human_move_feedback':
-          useGameStore.setState({ humanMoveFeedback: msg.payload });
+          useGameStore.setState((s) => {
+            const feedback = msg.payload;
+            // Patch classification into the last non-bot move record
+            const updatedMoves = s.moves.map((m, idx) => {
+              if (!m.is_bot && idx === s.moves.length - 1) {
+                return { ...m, classification: feedback.classification };
+              }
+              return m;
+            });
+            return { humanMoveFeedback: feedback, moves: updatedMoves };
+          });
           break;
 
         case 'game_over': {
@@ -98,6 +108,25 @@ export function useGameSocket(gameId) {
 
         case 'draw_offer':
           useGameStore.setState({ pendingDrawOffer: msg.payload.from });
+          break;
+
+        case 'draw_offer_sent':
+          useGameStore.setState({ drawOfferSent: true });
+          break;
+
+        case 'draw_declined':
+          useGameStore.setState({ drawOfferSent: false, drawDeclinedMsg: msg.payload?.msg || 'Draw offer declined.' });
+          // Clear the decline message after 4 seconds
+          setTimeout(() => useGameStore.setState({ drawDeclinedMsg: null }), 4000);
+          break;
+
+        case 'both_ready':
+          // Both players are ready — signal the game to start
+          useGameStore.setState({ bothReady: true });
+          break;
+
+        case 'waiting_for_opponent':
+          useGameStore.setState({ waitingForOpponent: true });
           break;
 
         default:

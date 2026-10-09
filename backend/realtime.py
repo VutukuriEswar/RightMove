@@ -26,13 +26,18 @@ class ConnectionManager:
     # Initializes connection manager resources
     def __init__(self):
         self._rooms: Dict[str, Set[WebSocket]] = {}
+        self._player_ws: Dict[str, Dict[str, WebSocket]] = {}  # game_id -> {user_id: ws}
 
     # Accepts and registers client connection
-    async def connect(self, game_id: str, websocket: WebSocket):
+    async def connect(self, game_id: str, websocket: WebSocket, user_id: str = None):
         await websocket.accept()
         if game_id not in self._rooms:
             self._rooms[game_id] = set()
         self._rooms[game_id].add(websocket)
+        if user_id:
+            if game_id not in self._player_ws:
+                self._player_ws[game_id] = {}
+            self._player_ws[game_id][user_id] = websocket
         logger.info(f"[ws] Client connected to game {game_id}. Room size: {len(self._rooms[game_id])}")
 
 
@@ -42,6 +47,12 @@ class ConnectionManager:
             self._rooms[game_id].discard(websocket)
             if not self._rooms[game_id]:
                 del self._rooms[game_id]
+        if game_id in self._player_ws:
+            to_remove = [uid for uid, ws in self._player_ws[game_id].items() if ws is websocket]
+            for uid in to_remove:
+                del self._player_ws[game_id][uid]
+            if not self._player_ws[game_id]:
+                del self._player_ws[game_id]
         logger.info(f"[ws] Client disconnected from game {game_id}.")
 
 
@@ -65,6 +76,25 @@ class ConnectionManager:
             await websocket.send_json(message)
         except Exception as e:
             logger.warning(f"[ws] Failed to send to client: {e}")
+
+    # Gets websocket for a specific user in a room
+    def get_player_ws(self, game_id: str, user_id: str) -> Optional[WebSocket]:
+        return self._player_ws.get(game_id, {}).get(user_id)
+
+    # Broadcasts to all clients EXCEPT the sender
+    async def broadcast_except(self, game_id: str, exclude_ws: WebSocket, message: dict):
+        if game_id not in self._rooms:
+            return
+        disconnected = set()
+        for ws in list(self._rooms[game_id]):
+            if ws is exclude_ws:
+                continue
+            try:
+                await ws.send_json(message)
+            except Exception:
+                disconnected.add(ws)
+        for ws in disconnected:
+            self._rooms[game_id].discard(ws)
 
 
 manager = ConnectionManager()
@@ -110,6 +140,7 @@ class GameState:
         self.result: Optional[str] = None
         self.training_mode = game_doc.get("training_mode", False)
         self.last_eval_cp: int = 0
+        self.ready_players: set = set()  # tracks which user_ids have sent 'ready'
 
 
 # Returns side to move color
@@ -244,7 +275,7 @@ async def handle_game_socket(
         return
 
 
-    await manager.connect(game_id, websocket)
+    await manager.connect(game_id, websocket, user_id)
 
 
     if game_id not in _game_states:
@@ -299,10 +330,52 @@ async def handle_game_socket(
                 await _end_game(game_id, state, result)
 
             elif msg_type == "draw_offer":
-                await manager.broadcast(game_id, {
-                    "type": "draw_offer",
-                    "payload": {"from": user_id},
-                })
+                if state.mode == "bot":
+                    # Bot auto-decides: accept if it's losing, decline otherwise
+                    import chess.engine as ce
+                    try:
+                        from engines import get_pool, EngineType
+                        sf_pool = get_pool(EngineType.STOCKFISH)
+                        engine = await sf_pool.acquire()
+                        try:
+                            info = await engine.analyse(state.board, ce.Limit(depth=10))
+                            score = info.get("score")
+                            cp = score.relative.score(mate_score=10000) if score else 0
+                        finally:
+                            await sf_pool.release(engine)
+                        # Bot is playing as the side NOT equal to user's player_color
+                        # cp is relative to side to move
+                        bot_color = "black" if state.player_color == "white" else "white"
+                        # Positive cp means side-to-move is winning
+                        # Bot accepts if it's losing (cp favorable to user)
+                        if bot_color == "white":
+                            bot_is_losing = cp > 100  # user (black) is ahead
+                        else:
+                            bot_is_losing = cp < -100  # user (white) is ahead
+                        if bot_is_losing:
+                            await _end_game(game_id, state, "draw")
+                        else:
+                            await manager.send_to(websocket, {
+                                "type": "draw_declined",
+                                "payload": {"msg": "The coach declined the draw offer."},
+                            })
+                    except Exception as e:
+                        logger.warning(f"[bot] Draw offer evaluation failed: {e}; auto-declining")
+                        await manager.send_to(websocket, {
+                            "type": "draw_declined",
+                            "payload": {"msg": "The coach declined the draw offer."},
+                        })
+                else:
+                    # Send draw offer only to the opponent, not the sender
+                    await manager.broadcast_except(game_id, websocket, {
+                        "type": "draw_offer",
+                        "payload": {"from": user_id},
+                    })
+                    # Notify the sender that their offer was sent
+                    await manager.send_to(websocket, {
+                        "type": "draw_offer_sent",
+                        "payload": {},
+                    })
 
             elif msg_type == "draw_accept":
                 await _end_game(game_id, state, "draw")
@@ -324,10 +397,26 @@ async def handle_game_socket(
                 await manager.send_to(websocket, {"type": "pong", "payload": {}})
 
             elif msg_type == "ready":
-                if len(state.moves) == 0:
-                    state.last_move_time = time.time()
-                state.clock_running = True
-                _ensure_clock_task(game_id, state)
+                # For bot/pass_and_play games, start immediately
+                if state.mode in ("bot", "pass_and_play"):
+                    if len(state.moves) == 0:
+                        state.last_move_time = time.time()
+                    state.clock_running = True
+                    _ensure_clock_task(game_id, state)
+                else:
+                    # Multiplayer: wait for both players to be ready
+                    state.ready_players.add(user_id)
+                    both_ids = {state.white_id, state.black_id} - {None}
+                    if both_ids and state.ready_players.issuperset(both_ids):
+                        # Both players ready — start the clock
+                        if len(state.moves) == 0:
+                            state.last_move_time = time.time()
+                        state.clock_running = True
+                        _ensure_clock_task(game_id, state)
+                        await manager.broadcast(game_id, {"type": "both_ready", "payload": {}})
+                    else:
+                        # Notify this player they are queued
+                        await manager.send_to(websocket, {"type": "waiting_for_opponent", "payload": {}})
 
     except WebSocketDisconnect:
         manager.disconnect(game_id, websocket)
@@ -628,6 +717,13 @@ async def _send_human_feedback(game_id: str, state: GameState, uci_str: str, is_
             is_capture=is_capture,
             best_move_cp=None,
         )
+
+        for m in reversed(state.moves):
+            if not m.get("is_bot") and m.get("uci") == uci_str:
+                m["classification"] = classification
+                m["eval_before"] = state.last_eval_cp
+                m["eval_after"] = eval_after
+                break
 
         await manager.broadcast(game_id, {
             "type": "human_move_feedback",
