@@ -497,6 +497,8 @@ export default function Board3D({
   }, [cameraY, defaultZoom]);
 
   const fitKey = `${model3d}|${board ? 'b' : 'nb'}`;
+  const isSmallScreen = typeof window !== 'undefined' && window.innerWidth < 768;
+  const dprValue = thumbnail ? 1 : isSmallScreen ? 1 : [1, 2];
 
   return (
     <div
@@ -510,7 +512,7 @@ export default function Board3D({
           shadows={!thumbnail}
           camera={{ position: [0, cameraY, zoomEffective], fov: 45 }}
           gl={{ antialias: !thumbnail }}
-          dpr={thumbnail ? 1 : [1, 2]}
+          dpr={dprValue}
           frameloop={thumbnail ? 'demand' : 'always'}
         >
           <ambientLight intensity={0.9} color="#FFF4E0" />
@@ -610,9 +612,9 @@ export default function Board3D({
 
         {!thumbnail && !preview && (
           <div style={{ position: 'absolute', right: 10, bottom: 10, zIndex: 5, display: 'flex', gap: 6 }}>
-            <button className="interactive" aria-label="Zoom out" title="Zoom out" onClick={() => dollyBy(1.25)} style={zoomBtnStyle}>−</button>
-            <button className="interactive" aria-label="Reset view" title="Reset view" onClick={resetView} style={zoomBtnStyle}>⛶</button>
-            <button className="interactive" aria-label="Zoom in" title="Zoom in" onClick={() => dollyBy(0.8)} style={zoomBtnStyle}>+</button>
+            <button className="interactive" aria-label="Zoom out" title="Zoom out" onClick={() => dollyBy(1.25)} style={{ ...zoomBtnStyle, width: 44, height: 44 }}>−</button>
+            <button className="interactive" aria-label="Reset view" title="Reset view" onClick={resetView} style={{ ...zoomBtnStyle, width: 44, height: 44 }}>⛶</button>
+            <button className="interactive" aria-label="Zoom in" title="Zoom in" onClick={() => dollyBy(0.8)} style={{ ...zoomBtnStyle, width: 44, height: 44 }}>+</button>
           </div>
         )}
 
@@ -637,7 +639,7 @@ export default function Board3D({
             aria-label="Choose promotion piece"
             style={{
               position: 'absolute', inset: 0, zIndex: 5, display: 'flex', alignItems: 'center',
-              justifyContent: 'center', gap: '10px', padding: '16px',
+              justifyContent: 'center', gap: '10px', padding: '16px', flexWrap: 'wrap',
               background: 'rgba(15,8,5,0.45)',
             }}
           >

@@ -349,7 +349,7 @@ export default function GameRoom() {
           ({moves.length} {moves.length === 1 ? 'move' : 'moves'} played).
           Continue it or start a fresh board with the same time control?
         </p>
-        <div style={{ display: 'flex', gap: '16px', width: '100%', marginTop: '10px' }}>
+        <div className="modal-btn-row">
           <button
             className="btn-neon interactive"
             style={{ flex: 1, padding: '12px 0' }}
@@ -377,7 +377,7 @@ export default function GameRoom() {
         <div className="ready-modal-crest">🤝</div>
         <h2>Draw Offered</h2>
         <p>Your opponent has offered a draw. Do you accept?</p>
-        <div style={{ display: 'flex', gap: '16px', width: '100%', marginTop: '10px' }}>
+        <div className="modal-btn-row">
           <button
             className="btn-neon interactive"
             style={{ flex: 1, padding: '12px 0' }}
@@ -415,7 +415,7 @@ export default function GameRoom() {
           {gameOverTitle}
         </h2>
         <p>The battle has concluded.</p>
-        <div style={{ display: 'flex', gap: '16px', width: '100%', marginTop: '10px' }}>
+        <div className="modal-btn-row">
           <button
             className="btn-neon interactive"
             style={{ flex: 1, padding: '12px 0' }}
@@ -663,7 +663,7 @@ export default function GameRoom() {
                         <div style={{
                           position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
                           background: '#1a1208', border: '1px solid var(--royal-crimson)', borderRadius: '6px',
-                          padding: '6px 12px', fontSize: '0.75rem', whiteSpace: 'nowrap', zIndex: 50,
+                          padding: '6px 12px', fontSize: '0.75rem', whiteSpace: 'normal', maxWidth: '90vw', textAlign: 'center', zIndex: 50,
                           color: 'var(--royal-crimson)',
                         }}>{drawDeclinedMsg}</div>
                       )}

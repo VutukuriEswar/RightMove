@@ -18,6 +18,7 @@ export function NavBar() {
   const liveGameResult = useGameStore((s) => s.result);
   const openLeaveDialog = useLeaveGameStore((s) => s.openLeaveDialog);
   const closeLeaveDialog = useLeaveGameStore((s) => s.closeLeaveDialog);
+  const [menuOpen, setMenuOpen] = React.useState(false);
 
   const handleLogout = () => {
     const inLiveGame =
@@ -45,8 +46,8 @@ export function NavBar() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: 'spring', stiffness: 100, damping: 20, delay: 0.2 }}
     >
-      <div className="navbar-inner">
-        <Link to="/" className="navbar-logo interactive">
+      <div className={`navbar-inner${menuOpen ? ' nav-open' : ''}`}>
+        <Link to="/" className="navbar-logo interactive" onClick={() => setMenuOpen(false)}>
           <motion.span 
             className="navbar-logo-icon"
             whileHover={{ rotate: 360, scale: 1.2 }}
@@ -57,17 +58,28 @@ export function NavBar() {
           <span className="navbar-logo-text">RightMove</span>
         </Link>
 
+        {isLoggedIn && (
+          <button
+            className="navbar-menu-btn interactive"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+          >
+            {menuOpen ? '✕' : '☰'}
+          </button>
+        )}
+
         <ul className="navbar-links" role="navigation" aria-label="Main navigation">
           {isLoggedIn && (
             <>
-              <li><Link className="interactive" to="/lobby">Play</Link></li>
-              <li><Link className="interactive" to="/friends">Friends</Link></li>
-              <li><Link className="interactive" to="/learn">Learn</Link></li>
-              <li><Link className="interactive" to="/history">History</Link></li>
+              <li><Link className="interactive" to="/lobby" onClick={() => setMenuOpen(false)}>Play</Link></li>
+              <li><Link className="interactive" to="/friends" onClick={() => setMenuOpen(false)}>Friends</Link></li>
+              <li><Link className="interactive" to="/learn" onClick={() => setMenuOpen(false)}>Learn</Link></li>
+              <li><Link className="interactive" to="/history" onClick={() => setMenuOpen(false)}>History</Link></li>
               {user?.role === 'admin' && (
                 <>
-                  <li><Link className="interactive" to="/admin/users">Users</Link></li>
-                  <li><Link className="interactive" to="/admin/training">Training</Link></li>
+                  <li><Link className="interactive" to="/admin/users" onClick={() => setMenuOpen(false)}>Users</Link></li>
+                  <li><Link className="interactive" to="/admin/training" onClick={() => setMenuOpen(false)}>Training</Link></li>
                 </>
               )}
             </>

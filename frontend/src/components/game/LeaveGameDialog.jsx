@@ -15,7 +15,7 @@ export default function LeaveGameDialog() {
         <div className="ready-modal-crest">♞</div>
         <h2>Leave the game?</h2>
         <p>Leaving now counts as a loss — the opponent will be awarded the win.</p>
-        <div style={{ display: 'flex', gap: '16px', width: '100%', marginTop: '10px' }}>
+        <div className="modal-btn-row">
           <button
             className="btn-neon interactive"
             style={{ flex: 1, padding: '12px 0' }}

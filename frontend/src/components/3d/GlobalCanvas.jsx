@@ -206,8 +206,8 @@ export const GlobalCanvas = () => {
   return (
     <div style={{
       position: 'fixed',
-      top: 0, left: 0,
-      width: '100vw', height: '100vh',
+      top: 0, left: 0, right: 0, bottom: 0,
+      width: '100%', height: '100dvh',
       zIndex: -1,
       background: isDark ? `
         radial-gradient(ellipse at 72% 58%, rgba(212,175,55,0.08) 0%, transparent 60%),

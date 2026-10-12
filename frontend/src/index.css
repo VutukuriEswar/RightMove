@@ -69,13 +69,17 @@ html[data-theme="dark"] {
 
 * {
   box-sizing: border-box;
-  cursor: none !important;
 }
 
-a, button, input, select, textarea, label,
-[role="button"], [tabindex], .interactive,
-.promotion-btn {
-  cursor: none !important;
+@media (hover: hover) and (pointer: fine) {
+  * {
+    cursor: none !important;
+  }
+  a, button, input, select, textarea, label,
+  [role="button"], [tabindex], .interactive,
+  .promotion-btn {
+    cursor: none !important;
+  }
 }
 
 body {
@@ -183,3 +187,14 @@ a {
   transition: opacity 0.25s ease;
 }
 a:hover { opacity: 0.75; }
+
+@media (hover: none), (pointer: coarse) {
+  *, *::before, *::after {
+    cursor: auto !important;
+  }
+  a, button, input, select, textarea, label,
+  [role="button"], [tabindex], .interactive,
+  .promotion-btn, .board2d-frame, .board2d-frame * {
+    cursor: auto !important;
+  }
+}

@@ -3,11 +3,12 @@ import { motion } from 'framer-motion';
 import { CLASSIFICATION_META } from '../../lib/chessUtils';
 
 const MoveList = memo(function MoveList({ moves, activeIndex = null, onMoveClick }) {
+  const bodyRef = useRef(null);
   const bottomRef = useRef(null);
 
   useEffect(() => {
-    if (activeIndex === null && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (activeIndex === null && bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     }
   }, [moves.length, activeIndex]);
 
@@ -23,7 +24,7 @@ const MoveList = memo(function MoveList({ moves, activeIndex = null, onMoveClick
         <span className="move-list-col">White</span>
         <span className="move-list-col">Black</span>
       </div>
-      <div className="move-list-body">
+      <div className="move-list-body" ref={bodyRef}>
         {pairs.map((pair, pairIdx) => {
           const whiteMove = pair[0];
           const blackMove = pair[1];

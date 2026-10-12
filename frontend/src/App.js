@@ -72,7 +72,7 @@ function AppShell() {
     <>
       <GlobalCanvas />
       <CustomCursor />
-      <div style={{ position: 'relative', zIndex: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ position: 'relative', zIndex: 1, minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
         <NavBar />
         <AnimatedLayout />
         <LeaveGameDialog />
