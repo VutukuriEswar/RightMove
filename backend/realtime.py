@@ -750,10 +750,29 @@ async def _end_game(game_id: str, state: GameState, result: str):
         task.cancel()
 
     db = get_db()
-    await db.games.update_one(
-        {"_id": ObjectId(game_id)},
-        {"$set": {"result": result}},
-    )
+    try:
+        slim = []
+        for m in (state.moves or []):
+            slim.append({
+                "ply": m.get("ply"), "san": m.get("san"), "uci": m.get("uci"),
+                "from_sq": m.get("from_sq"), "to_sq": m.get("to_sq"),
+                "is_bot": bool(m.get("is_bot", False)),
+                "classification": m.get("classification"),
+                "elapsed_ms": m.get("elapsed_ms", 0),
+                "fen": m.get("fen"),
+            })
+        await db.games.update_one(
+            {"_id": ObjectId(game_id)},
+            {"$set": {"result": result, "moves": slim}},
+        )
+    except Exception:
+        try:
+            await db.games.update_one(
+                {"_id": ObjectId(game_id)},
+                {"$set": {"result": result}},
+            )
+        except Exception:
+            pass
 
 
     await manager.broadcast(game_id, {

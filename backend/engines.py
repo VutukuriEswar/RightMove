@@ -17,7 +17,8 @@ from core import CandidateMove, AnalysisResult
 
 # Groups move classification helpers and converts centipawn score to win probability
 def eval_to_win_prob(centipawns: int) -> float:
-    return 1.0 / (1.0 + math.pow(10, -centipawns / 400.0))
+    from review import eval_to_win_prob as _w
+    return _w(centipawns)
 
 
 # Classifies move quality from win probability
@@ -28,52 +29,26 @@ def classify_move(
     is_capture: bool,
     best_move_cp: Optional[int],
 ) -> str:
-    if is_white_to_move:
-        wp_before = eval_to_win_prob(eval_before_cp)
-        wp_after = eval_to_win_prob(eval_after_cp)
-    else:
-        wp_before = eval_to_win_prob(-eval_before_cp)
-        wp_after = eval_to_win_prob(-eval_after_cp)
-
-    delta = wp_before - wp_after
-
-    if (
-        is_capture is False
-        and best_move_cp is not None
-        and abs(eval_after_cp - best_move_cp) < 10
-        and eval_before_cp < eval_after_cp
-    ):
-        return "brilliant"
-
-    if delta < 0.01:
-        return "best"
-    elif delta < 0.03:
-        return "excellent"
-    elif delta < 0.06:
-        return "good"
-    elif delta < 0.12:
-        return "inaccuracy"
-    elif delta < 0.22:
-        return "mistake"
-    else:
-        return "blunder"
+    from review import classify_move as _c
+    return _c(eval_before_cp, eval_after_cp, is_white_to_move, is_capture, best_move_cp)
 
 
 # Calculates accuracy from move classifications
 def accuracy_from_classifications(classifications: list[str]) -> float:
-    if not classifications:
-        return 100.0
-
+    from review import game_accuracy as _g
     weights = {
         "brilliant": 100,
         "best": 100,
+        "best_move": 100,
         "excellent": 90,
         "good": 75,
         "inaccuracy": 50,
         "mistake": 25,
         "blunder": 0,
     }
-    total = sum(weights.get(c, 75) for c in classifications)
+    if not classifications:
+        return 100.0
+    total = sum(weights.get(str(c).lower(), 75) for c in classifications)
     return round(total / len(classifications), 1)
 
 

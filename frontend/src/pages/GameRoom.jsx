@@ -7,6 +7,7 @@ import { useAuthStore } from '../store/authStore';
 import { useBoardThemeStore } from '../store/boardThemeStore';
 import { useGameSocket } from '../hooks/useGameSocket';
 import { useLeaveGameGuard } from '../hooks/useLeaveGameGuard';
+import { useLeaveGameStore } from '../store/leaveGameStore';
 import { setActiveGameResigner, clearActiveGameResigner } from '../lib/activeGameResign';
 import Board2D from '../components/board/Board2D';
 import Board3D from '../components/board/Board3D';
@@ -44,8 +45,8 @@ export default function GameRoom() {
     initGame,
   } = useGameStore();
 
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [friendReqSent, setFriendReqSent] = useState(false);
 
   const resignAndClose = useCallback(() => {
@@ -63,27 +64,48 @@ export default function GameRoom() {
     useGameStore.getState().setResult(loser === 'white' ? 'black' : 'white');
   }, [sendResign]);
 
-  const leaveGameBlocker = useLeaveGameGuard(resignAndClose);
+  const resignForLeave = useCallback(() => {
+    const st = useGameStore.getState();
+    if (!st.gameId || st.result) return;
+    useLeaveGameStore.getState().setLeaving(true);
+    const loser =
+      st.mode === 'pass_and_play'
+        ? (st.fen.split(' ')[1] === 'w' ? 'white' : 'black')
+        : st.playerColor;
+    try {
+      sendResign(loser);
+    } catch (_) {
+
+    }
+  }, [sendResign]);
+
+  const leaving = useLeaveGameStore((s) => s.leaving);
+
+  const leaveGameBlocker = useLeaveGameGuard(resignForLeave);
 
   useEffect(() => {
-    setActiveGameResigner(resignAndClose);
-    return () => clearActiveGameResigner(resignAndClose);
-  }, [resignAndClose]);
+    useLeaveGameStore.getState().setLeaving(false);
+    setActiveGameResigner(resignForLeave);
+    return () => {
+      clearActiveGameResigner(resignForLeave);
+      useLeaveGameStore.getState().setLeaving(false);
+    };
+  }, [resignForLeave]);
 
   const [showReadyModal, setShowReadyModal] = useState(false);
-  const [playersReady, setPlayersReady]     = useState(false);
-  const [showGameOver, setShowGameOver]     = useState(false);
-  const [passPlayResignColor, setPassPlayResignColor] = useState(null); // 'white' | 'black' | null
+  const [playersReady, setPlayersReady] = useState(false);
+  const [showGameOver, setShowGameOver] = useState(false);
+  const [passPlayResignColor, setPassPlayResignColor] = useState(null);
 
   const [showResumeModal, setShowResumeModal] = useState(false);
-  const [startingNew, setStartingNew]         = useState(false);
+  const [startingNew, setStartingNew] = useState(false);
   const resumeDecidedRef = useRef(false);
   const timeControlRef = useRef({ tc: 600, inc: 0 });
 
   const FLIP_DURATION = 700;
-  const [isFlipping, setIsFlipping]   = useState(false);
-  const prevActiveColorRef            = useRef(null);
-  const flipTimerRef                  = useRef(null);
+  const [isFlipping, setIsFlipping] = useState(false);
+  const prevActiveColorRef = useRef(null);
+  const flipTimerRef = useRef(null);
 
   useEffect(() => {
     if (moves.length > 0 && showReadyModal && !showResumeModal) {
@@ -93,7 +115,6 @@ export default function GameRoom() {
     }
   }, [moves.length, showReadyModal, showResumeModal, sendReady]);
 
-  // For multiplayer, when both players are ready, start the game
   useEffect(() => {
     if (bothReady && !playersReady) {
       setPlayersReady(true);
@@ -112,12 +133,12 @@ export default function GameRoom() {
     }
     prevActiveColorRef.current = cur;
 
-  }, [fen, gameMode, playersReady]);
+  }, [fen, gameMode, playersReady, gameActive]);
 
   useEffect(() => () => { if (flipTimerRef.current) clearTimeout(flipTimerRef.current); }, []);
 
   useEffect(() => {
-    if (result) {
+    if (result && !useLeaveGameStore.getState().leaving) {
       setShowGameOver(true);
     }
   }, [result]);
@@ -232,7 +253,6 @@ export default function GameRoom() {
       setPlayersReady(true);
       setShowReadyModal(false);
     } else {
-      // For multiplayer, keep modal open with waiting state until both_ready
       useGameStore.setState({ waitingForOpponent: true });
     }
     sendReady();
@@ -267,41 +287,41 @@ export default function GameRoom() {
   };
 
   if (loading) return <div className="page"><div className="spinner-large" /></div>;
-  if (error)   return <div className="page"><div className="alert alert-error">{error}</div></div>;
+  if (error) return <div className="page"><div className="alert alert-error">{error}</div></div>;
 
-  const activeColor   = fen.split(' ')[1] === 'w' ? 'white' : 'black';
+  const activeColor = fen.split(' ')[1] === 'w' ? 'white' : 'black';
   const isPassAndPlay = gameMode === 'pass_and_play';
 
-  const isPlayerTurn  = isPassAndPlay ? true : (activeColor === playerColor);
-  const gameActive    = result === null;
+  const isPlayerTurn = isPassAndPlay ? true : (activeColor === playerColor);
+  const gameActive = result === null;
   const lastMoveRecord = moves.length > 0 ? moves[moves.length - 1] : null;
   const lastMove = moveRecordToSquares(lastMoveRecord);
 
-  const whiteClock    = clocks.white ?? 600000;
-  const blackClock    = clocks.black ?? 600000;
+  const whiteClock = clocks.white ?? 600000;
+  const blackClock = clocks.black ?? 600000;
 
   const viewColor = isPassAndPlay ? activeColor : (boardFlipped ? (playerColor === 'white' ? 'black' : 'white') : playerColor);
   const boardOrientation = isPassAndPlay ? activeColor : viewColor;
 
   const bottomColor = boardOrientation;
-  const topColor    = bottomColor === 'white' ? 'black' : 'white';
+  const topColor = bottomColor === 'white' ? 'black' : 'white';
 
-  const myClock    = bottomColor === 'white' ? whiteClock : blackClock;
+  const myClock = bottomColor === 'white' ? whiteClock : blackClock;
   const theirClock = topColor === 'white' ? whiteClock : blackClock;
 
-  const myClockActive    = gameActive && playersReady && activeColor === bottomColor && !isFlipping;
-  const theirClockActive = gameActive && playersReady && activeColor === topColor    && !isFlipping;
+  const myClockActive = gameActive && playersReady && activeColor === bottomColor && !isFlipping;
+  const theirClockActive = gameActive && playersReady && activeColor === topColor && !isFlipping;
 
-  const topIsActive    = gameActive && playersReady && !showResumeModal && activeColor === topColor;
+  const topIsActive = gameActive && playersReady && !showResumeModal && activeColor === topColor;
   const bottomIsActive = gameActive && playersReady && !showResumeModal && activeColor === bottomColor;
 
   const isEngineGame = gameMode === 'bot';
   const handleTheirTimeout = (!isEngineGame && hasTimer) ? () => sendTimeout(topColor) : undefined;
-  const handleMyTimeout    = (!isEngineGame && hasTimer) ? () => sendTimeout(bottomColor) : undefined;
+  const handleMyTimeout = (!isEngineGame && hasTimer) ? () => sendTimeout(bottomColor) : undefined;
 
   const showClocks = !isEngineGame && hasTimer;
 
-  const myLabel    = isPassAndPlay ? (bottomColor === 'white' ? 'White' : 'Black') : 'You';
+  const myLabel = isPassAndPlay ? (bottomColor === 'white' ? 'White' : 'Black') : 'You';
   const theirLabel = isPassAndPlay
     ? (topColor === 'white' ? 'White' : 'Black')
     : (opponentUsername || 'Opponent');
@@ -403,11 +423,11 @@ export default function GameRoom() {
 
   const gameOverTitle =
     result === 'draw' ? 'Game Drawn'
-    : result === 'white' ? 'White Wins!'
-    : result === 'black' ? 'Black Wins!'
-    : result === 'aborted' ? 'Game Aborted'
-    : 'Game Over';
-  const gameOverModalPortal = !gameActive && showGameOver && createPortal(
+      : result === 'white' ? 'White Wins!'
+        : result === 'black' ? 'Black Wins!'
+          : result === 'aborted' ? 'Game Aborted'
+            : 'Game Over';
+  const gameOverModalPortal = !gameActive && showGameOver && !leaving && createPortal(
     <div className="ready-modal-overlay">
       <div className="ready-modal">
         <div className="ready-modal-crest">{result === 'draw' ? '½-½' : '♚'}</div>
@@ -488,10 +508,12 @@ export default function GameRoom() {
                   {!isPassAndPlay && !isEngineGame && opponentUsername && (
                     <button
                       className="btn-sm interactive"
-                      style={{ fontSize: '0.7rem', padding: '4px 8px', marginRight: '8px',
+                      style={{
+                        fontSize: '0.7rem', padding: '4px 8px', marginRight: '8px',
                         background: friendReqSent ? 'transparent' : undefined,
                         borderColor: friendReqSent ? 'var(--royal-gold)' : undefined,
-                        color: friendReqSent ? 'var(--royal-gold)' : undefined }}
+                        color: friendReqSent ? 'var(--royal-gold)' : undefined
+                      }}
                       disabled={friendReqSent}
                       title={friendReqSent ? 'Friend request sent!' : `Add ${opponentUsername} as friend`}
                       onClick={async () => {
@@ -574,9 +596,7 @@ export default function GameRoom() {
             <div className="game-controls">
               {gameActive ? (
                 isPassAndPlay ? (
-                  // Pass & Play: per-color resign buttons with inline confirm
                   <div className="action-buttons" style={{ flexDirection: 'column', gap: '8px' }}>
-                    {/* White Resign */}
                     <div style={{ position: 'relative' }}>
                       <button
                         className="btn-neon interactive"
@@ -609,7 +629,6 @@ export default function GameRoom() {
                         </div>
                       )}
                     </div>
-                    {/* Black Resign */}
                     <div style={{ position: 'relative' }}>
                       <button
                         className="btn-neon interactive"
@@ -644,7 +663,6 @@ export default function GameRoom() {
                     </div>
                   </div>
                 ) : (
-                  // Regular / Engine game
                   <div className="action-buttons">
                     <button
                       className="btn-neon interactive"

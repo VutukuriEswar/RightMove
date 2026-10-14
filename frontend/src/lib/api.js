@@ -61,6 +61,7 @@ export const gamesApi = {
   get: (gameId) => api.get(`/games/${gameId}`),
   getMyStats: () => api.get('/games/mine/stats'),
   getSummary: (gameId) => api.get(`/games/${gameId}/summary`),
+  getMoves: (gameId) => api.get(`/games/${gameId}/moves`),
   chooseColor: (gameId, player_color) =>
     api.post(`/games/${gameId}/choose-color`, { player_color }),
   updateBotConfig: (gameId, cfg) =>

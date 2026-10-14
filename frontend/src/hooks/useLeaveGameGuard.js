@@ -62,6 +62,10 @@ export function useLeaveGameGuard(resignAndClose) {
     openLeaveDialog({
       onConfirm: () => {
         try {
+          useLeaveGameStore.getState().setLeaving(true);
+        } catch (_) {
+        }
+        try {
           resignRef.current?.();
         } catch (_) {
         }

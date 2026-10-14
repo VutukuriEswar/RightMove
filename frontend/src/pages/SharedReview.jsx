@@ -1,15 +1,12 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { buildPositions, decodeSharePayload, moveRecordToSquares } from '../lib/chessUtils';
-import { useBoardThemeStore } from '../store/boardThemeStore';
 import Board2D from '../components/board/Board2D';
-import Board3D from '../components/board/Board3D';
 import MoveList from '../components/game/MoveList';
 
 const ENGINE_INTERVAL_MS = 800;
 
 export default function SharedReview() {
-  const { style: boardStyle, setStyle } = useBoardThemeStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [currentMoveIdx, setCurrentMoveIdx] = useState(-1);
@@ -86,22 +83,64 @@ export default function SharedReview() {
 
           <div className="review-board-container">
             <div className="board-wrapper">
-              {boardStyle === '3d' ? (
-                <Board3D fen={currentFen} disabled={true} preview={false}
-                  lastMove={lastMoveSq}
-                  onFallbackTo2D={() => setStyle('2d')} />
-              ) : (
-                <Board2D id="sharedBoard" fen={currentFen} disabled={true} lastMove={lastMoveSq} />
-              )}
+              <Board2D id="sharedBoard" fen={currentFen} disabled={true} lastMove={lastMoveSq} />
             </div>
             <div className="review-controls-bottom">
-              <button className="btn btn-secondary review-nav-btn" onClick={() => { setIsPlaying(false); setCurrentMoveIdx(-1); }}>|◀</button>
-              <button className="btn btn-secondary review-nav-btn" onClick={() => step(-1)}>◀</button>
-              <button className={`review-play-btn ${isPlaying ? 'playing' : ''}`} onClick={() => setIsPlaying(p => !p)}>
-                {isPlaying ? '⏸' : '▶'}
+              <button
+                className="btn btn-secondary review-nav-btn"
+                title="Start"
+                aria-label="First move"
+                onClick={() => { setIsPlaying(false); setCurrentMoveIdx(-1); }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+                </svg>
               </button>
-              <button className="btn btn-secondary review-nav-btn" onClick={() => step(1)}>▶</button>
-              <button className="btn btn-secondary review-nav-btn" onClick={() => { setIsPlaying(false); setCurrentMoveIdx(moves.length - 1); }}>▶|</button>
+              <button
+                className="btn btn-secondary review-nav-btn"
+                title="Prev"
+                aria-label="Previous move"
+                onClick={() => step(-1)}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18 18l-9-6 9-6v12z"/>
+                </svg>
+              </button>
+              <button
+                className={`review-play-btn ${isPlaying ? 'playing' : ''}`}
+                title={isPlaying ? 'Pause' : 'Play'}
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+                onClick={() => setIsPlaying(p => !p)}
+              >
+                {isPlaying ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                  </svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '2px' }}>
+                    <path d="M8 5v14l11-7z"/>
+                  </svg>
+                )}
+              </button>
+              <button
+                className="btn btn-secondary review-nav-btn"
+                title="Next"
+                aria-label="Next move"
+                onClick={() => step(1)}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M6 6l9 6-9 6V6z"/>
+                </svg>
+              </button>
+              <button
+                className="btn btn-secondary review-nav-btn"
+                title="End"
+                aria-label="Last move"
+                onClick={() => { setIsPlaying(false); setCurrentMoveIdx(moves.length - 1); }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M6 6v12l8.5-6zm10 0h2v12h-2z"/>
+                </svg>
+              </button>
             </div>
             <p className="review-hint">Arrow keys to navigate · Space to play/pause</p>
           </div>

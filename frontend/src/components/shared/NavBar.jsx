@@ -18,6 +18,7 @@ export function NavBar() {
   const liveGameResult = useGameStore((s) => s.result);
   const openLeaveDialog = useLeaveGameStore((s) => s.openLeaveDialog);
   const closeLeaveDialog = useLeaveGameStore((s) => s.closeLeaveDialog);
+  const setLeaving = useLeaveGameStore((s) => s.setLeaving);
   const [menuOpen, setMenuOpen] = React.useState(false);
 
   const handleLogout = () => {
@@ -26,6 +27,7 @@ export function NavBar() {
     if (inLiveGame && hasActiveGameResigner()) {
       openLeaveDialog({
         onConfirm: () => {
+          setLeaving(true);
           resignActiveGame();
           closeLeaveDialog();
           logout();

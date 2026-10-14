@@ -333,6 +333,21 @@ async def get_game_summary(game_id: str):
         key_moments=summary.get("key_moments", []),
     )
 
+# Fetches persisted move log for game
+@games_router.get("/{game_id}/moves")
+async def get_game_moves(game_id: str, current_user: dict = Depends(get_current_user)):
+    from bson import ObjectId as _OID
+    try:
+        oid = _OID(game_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Game not found")
+    db = get_db()
+    game = await db.games.find_one({"_id": oid})
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    moves = game.get("moves") or []
+    return {"game_id": game_id, "moves": moves, "result": game.get("result", "ongoing")}
+
 # Submits annotated move log for game
 @games_router.post("/{game_id}/summary")
 async def submit_game_summary(
@@ -1321,70 +1336,86 @@ async def analyze_game(req: AnalyzeGameRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Analyzes PGN text or path into move results
+async def _analyze_report_moves(pgn_text, pgn_path):
+    if pgn_text:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pgn", delete=False, encoding="utf-8") as f:
+            f.write(pgn_text)
+            temp_path = f.name
+        try:
+            return await GameAnalyzer.analyze_game(_report_engine, temp_path)
+        finally:
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+    if pgn_path:
+        return await GameAnalyzer.analyze_game(_report_engine, pgn_path)
+    raise HTTPException(status_code=400, detail="Provide pgn_text or pgn_path.")
+
+
+# Builds shared report payload from move results
+def _build_report_payload(move_results, pgn_text=None, pgn_path=None):
+    report_summary = GameReport.summarize(move_results)
+    accuracy = GameReport.accuracy_score(move_results)
+    acc_white = GameReport.color_accuracy(move_results, "white")
+    acc_black = GameReport.color_accuracy(move_results, "black")
+    from review import grade_for as _gf
+    grade = GameReport.grade(accuracy)
+    weaknesses = WeaknessDetector.detect(move_results)
+    style = StyleAnalyzer.analyze(move_results)
+    training_plan = TrainingPlan.generate(weaknesses["weaknesses"])
+    opening_recs = OpeningRecommender.recommend(style["style"])
+    opening = OpeningDetector.detect(pgn_path) if pgn_path else OpeningDetector.detect_text(pgn_text or "")
+    summary_text = GameSummary.generate({
+        "blunders": weaknesses["blunders"],
+        "mistakes": weaknesses["mistakes"],
+        "inaccuracies": weaknesses["inaccuracies"],
+        "weaknesses": weaknesses["weaknesses"],
+    })
+    return {
+        "opening": opening,
+        "accuracy": accuracy,
+        "accuracy_white": acc_white,
+        "accuracy_black": acc_black,
+        "grade": grade,
+        "grade_white": _gf(acc_white),
+        "grade_black": _gf(acc_black),
+        "style": style["style"],
+        "style_scores": style["scores"],
+        "weaknesses": weaknesses["weaknesses"],
+        "summary_counts": report_summary,
+        "training_plan": training_plan,
+        "opening_recommendations": opening_recs,
+        "summary_text": summary_text,
+        "moves": [
+            {
+                "move_number": m["move_number"],
+                "fullmove_number": m.get("fullmove_number", m["move_number"]),
+                "ply": m.get("ply"),
+                "turn": m.get("turn"),
+                "move": m["san"],
+                "san": m["san"],
+                "best_move": m.get("best_move"),
+                "best_move_san": m.get("best_move_san"),
+                "classification": m["classification"],
+                "cp_loss": m["cp_loss"],
+                "accuracy_score": m.get("accuracy_score", 100.0),
+                "concepts": m.get("concepts", []),
+            }
+            for m in move_results
+        ],
+    }
+
+
 # Generates complete game report with plan
 @report_router.post("/full-report")
 async def generate_full_report(req: FullReportRequest):
     try:
-        if req.pgn_text:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".pgn", delete=False, encoding="utf-8") as f:
-                f.write(req.pgn_text)
-                temp_path = f.name
-            try:
-                move_results = await GameAnalyzer.analyze_game(_report_engine, temp_path)
-            finally:
-                os.unlink(temp_path)
-        elif req.pgn_path:
-            move_results = await GameAnalyzer.analyze_game(_report_engine, req.pgn_path)
-        else:
-            raise HTTPException(status_code=400, detail="Provide pgn_text or pgn_path.")
-
+        move_results = await _analyze_report_moves(req.pgn_text, req.pgn_path)
         if not move_results:
             raise HTTPException(status_code=400, detail="No moves found in game.")
-
-        report_summary = GameReport.summarize(move_results)
-        accuracy = GameReport.accuracy_score(move_results)
-        grade = GameReport.grade(accuracy)
-        weaknesses = WeaknessDetector.detect(move_results)
-        style = StyleAnalyzer.analyze(move_results)
-        training_plan = TrainingPlan.generate(weaknesses["weaknesses"])
-        opening_recs = OpeningRecommender.recommend(style["style"])
-
-        opening = "Unknown Opening"
-        if req.pgn_path:
-            opening = OpeningDetector.detect(req.pgn_path)
-
-        summary_text = GameSummary.generate({
-            "blunders": weaknesses["blunders"],
-            "mistakes": weaknesses["mistakes"],
-            "inaccuracies": weaknesses["inaccuracies"],
-            "weaknesses": weaknesses["weaknesses"],
-        })
-
-        report_data = {
-            "opening": opening,
-            "accuracy": accuracy,
-            "grade": grade,
-            "style": style["style"],
-            "style_scores": style["scores"],
-            "weaknesses": weaknesses["weaknesses"],
-            "summary_counts": report_summary,
-            "training_plan": training_plan,
-            "opening_recommendations": opening_recs,
-            "summary_text": summary_text,
-            "moves": [
-                {
-                    "move_number": m["move_number"],
-                    "move": m["san"],
-                    "classification": m["classification"],
-                    "cp_loss": m["cp_loss"],
-                    "accuracy_score": m.get("accuracy_score", 100.0),
-                    "concepts": m.get("concepts", []),
-                }
-                for m in move_results
-            ],
-        }
-
-        return report_data
+        return _build_report_payload(move_results, req.pgn_text, req.pgn_path)
     except HTTPException:
         raise
     except Exception as e:
@@ -1393,52 +1424,27 @@ async def generate_full_report(req: FullReportRequest):
 # Generates downloadable PDF game report
 @report_router.post("/pdf")
 async def generate_pdf(req: FullReportRequest):
+    from starlette.background import BackgroundTask as _BT
     try:
-        if req.pgn_text:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".pgn", delete=False, encoding="utf-8") as f:
-                f.write(req.pgn_text)
-                temp_path = f.name
-            try:
-                move_results = await GameAnalyzer.analyze_game(_report_engine, temp_path)
-            finally:
-                os.unlink(temp_path)
-        elif req.pgn_path:
-            move_results = await GameAnalyzer.analyze_game(_report_engine, req.pgn_path)
-        else:
-            raise HTTPException(status_code=400, detail="Provide pgn_text or pgn_path.")
-
+        move_results = await _analyze_report_moves(req.pgn_text, req.pgn_path)
         if not move_results:
             raise HTTPException(status_code=400, detail="No moves found.")
+        report_data = _build_report_payload(move_results, req.pgn_text, req.pgn_path)
+        fd, pdf_path = tempfile.mkstemp(prefix="rightmove_report_", suffix=".pdf")
+        os.close(fd)
 
-        report_summary = GameReport.summarize(move_results)
-        accuracy = GameReport.accuracy_score(move_results)
-        grade = GameReport.grade(accuracy)
-        weaknesses = WeaknessDetector.detect(move_results)
-        style = StyleAnalyzer.analyze(move_results)
-        training_plan = TrainingPlan.generate(weaknesses["weaknesses"])
-        opening = OpeningDetector.detect(req.pgn_path) if req.pgn_path else "Unknown Opening"
+        def _cleanup(path: str):
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
 
-        report_data = {
-            "opening": opening,
-            "accuracy": accuracy,
-            "grade": grade,
-            "style": style["style"],
-            "weaknesses": weaknesses["weaknesses"],
-            "training_plan": training_plan,
-            "moves": [
-                {"move_number": m["move_number"], "move": m["san"],
-                 "classification": m["classification"], "cp_loss": m["cp_loss"]}
-                for m in move_results
-            ],
-        }
-
-        pdf_path = os.path.join(tempfile.gettempdir(), f"chess_report_{os.getpid()}.pdf")
         PDFReport.generate(pdf_path, report_data)
-
         return FileResponse(
             path=pdf_path,
-            filename="chess_coach_report.pdf",
+            filename="rightmove_coach_report.pdf",
             media_type="application/pdf",
+            background=_BT(_cleanup, pdf_path),
         )
     except HTTPException:
         raise

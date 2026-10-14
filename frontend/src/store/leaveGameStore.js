@@ -4,6 +4,7 @@ export const useLeaveGameStore = create((set) => ({
   isOpen: false,
   onConfirm: null,
   onCancel: null,
+  leaving: false,
 
   openLeaveDialog: ({ onConfirm, onCancel }) =>
     set((state) =>
@@ -13,4 +14,6 @@ export const useLeaveGameStore = create((set) => ({
     ),
 
   closeLeaveDialog: () => set({ isOpen: false, onConfirm: null, onCancel: null }),
+
+  setLeaving: (v) => set({ leaving: !!v }),
 }));

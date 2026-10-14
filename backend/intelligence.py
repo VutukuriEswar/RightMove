@@ -87,128 +87,8 @@ async def set_matched(opponent_id: str, game_id: str, my_user_id: str):
 
 # Section services/summary_service
 
-# Builds game summary from annotated moves
-def generate_summary(
-    game_id: str,
-    moves_data: list[dict],
-    white_username: str = "White",
-    black_username: str = "Black",
-) -> GameSummaryDoc:
-    white_classifications = []
-    black_classifications = []
-    key_moments: list[KeyMoment] = []
-
-    for move in moves_data:
-        is_white = move.get("is_white", move["ply"] % 2 == 1)
-        classification = classify_move(
-            eval_before_cp=move.get("eval_before_cp", 0),
-            eval_after_cp=move.get("eval_after_cp", 0),
-            is_white_to_move=is_white,
-            is_capture=move.get("is_capture", False),
-            best_move_cp=move.get("best_move_cp"),
-        )
-
-        if is_white:
-            white_classifications.append(classification)
-        else:
-            black_classifications.append(classification)
-
-        eval_before = move.get("eval_before_cp", 0)
-        eval_after = move.get("eval_after_cp", 0)
-        wp_before = eval_to_win_prob(eval_before if is_white else -eval_before)
-        wp_after = eval_to_win_prob(eval_after if is_white else -eval_after)
-        delta = abs(wp_before - wp_after)
-
-        if delta > 0.15 or classification in ("blunder", "mistake"):
-            key_moments.append(KeyMoment(
-                ply=move["ply"],
-                san=move["san"],
-                eval_before_cp=eval_before,
-                eval_after_cp=eval_after,
-                delta_win_prob=round(delta, 4),
-                classification=classification,
-            ))
-
-    key_moments.sort(key=lambda km: km.delta_win_prob, reverse=True)
-    key_moments = key_moments[:3]
-
-    accuracy_white = accuracy_from_classifications(white_classifications)
-    accuracy_black = accuracy_from_classifications(black_classifications)
-
-    summary_text = _write_summary(
-        white_username, black_username,
-        accuracy_white, accuracy_black,
-        white_classifications, black_classifications,
-        key_moments,
-    )
-
-    return GameSummaryDoc(
-        game_id=game_id,
-        accuracy_white=accuracy_white,
-        accuracy_black=accuracy_black,
-        summary_text=summary_text,
-        key_moments=key_moments,
-    )
-
-# Writes summary narrative from moments
-def _write_summary(
-    white_name: str,
-    black_name: str,
-    acc_white: float,
-    acc_black: float,
-    white_cls: list[str],
-    black_cls: list[str],
-    key_moments: list[KeyMoment],
-) -> str:
-    lines = []
-
-    lines.append(
-        f"**Game Summary**\n\n"
-        f"{white_name} played with {acc_white}% accuracy; "
-        f"{black_name} played with {acc_black}% accuracy."
-    )
-
-    w_blunders = white_cls.count("blunder")
-    b_blunders = black_cls.count("blunder")
-    w_mistakes = white_cls.count("mistake")
-    b_mistakes = black_cls.count("mistake")
-
-    if w_blunders or w_mistakes:
-        lines.append(
-            f"\n**{white_name}** made {w_blunders} blunder(s) and {w_mistakes} mistake(s). "
-            + _improvement_note(white_cls)
-        )
-    if b_blunders or b_mistakes:
-        lines.append(
-            f"\n**{black_name}** made {b_blunders} blunder(s) and {b_mistakes} mistake(s). "
-            + _improvement_note(black_cls)
-        )
-
-    if key_moments:
-        lines.append("\n**Key turning points:**")
-        for km in key_moments:
-            lines.append(
-                f"  • Move {(km.ply + 1) // 2} ({km.san}): "
-                f"{km.classification.capitalize()} — eval shifted by "
-                f"{km.delta_win_prob:.0%} in win probability."
-            )
-
-    return "\n".join(lines)
-
-# Generates improvement hint from error patterns
-def _improvement_note(classifications: list[str]) -> str:
-    blunders = classifications.count("blunder")
-    mistakes = classifications.count("mistake")
-    inaccuracies = classifications.count("inaccuracy")
-
-    if blunders >= 3:
-        return "Consider spending more time calculating forcing lines before committing to a move."
-    elif mistakes >= 3:
-        return "Focus on double-checking your moves for simple tactical responses (forks, pins, skewers)."
-    elif inaccuracies >= 5:
-        return "The move quality is close but drifting — try to identify the single best plan before each move."
-    else:
-        return "Review the highlighted moments in the move list to see where the game turned."
+# Re-exports review-match summary helper
+from review import generate_summary
 
 # Section services/explanation_service
 
@@ -1137,30 +1017,24 @@ class EvaluationAnalyzer:
     # Converts centipawn score to win probability
     @staticmethod
     def win_probability(cp):
-        win_p = 50.0 + 50.0 * (2.0 / (1.0 + math.exp(-0.00368208 * cp)) - 1.0)
-        return round(max(0.0, min(100.0, win_p)), 1)
+        from review import eval_to_win_prob as _w
+        try:
+            return round(_w(float(cp or 0.0)) * 100.0, 1)
+        except Exception:
+            return 50.0
 
     # Calculates accuracy from win probabilities
     @staticmethod
     def calculate_accuracy(win_prob_before, win_prob_after):
-        diff = max(0.0, win_prob_before - win_prob_after)
-        acc = 103.1668 * math.exp(-0.04354 * diff) - 3.1669
-        return round(max(0.0, min(100.0, acc)), 1)
+        from review import accuracy_from_wp_diff as _a
+        return _a(win_prob_before, win_prob_after)
 
     # Classifies centipawn loss into label
     @staticmethod
     def classify_cp_loss(cp_loss):
-        if cp_loss <= 20:
-            return "best_move"
-        if cp_loss <= 50:
-            return "excellent"
-        if cp_loss <= 100:
-            return "good"
-        if cp_loss <= 200:
-            return "inaccuracy"
-        if cp_loss <= 400:
-            return "mistake"
-        return "blunder"
+        from review import classify_loss as _c
+        label = _c(cp_loss)
+        return "best_move" if label == "best" else label
 
     # Classifies centipawn loss via thresholds
     @staticmethod
@@ -1168,13 +1042,15 @@ class EvaluationAnalyzer:
         category = EvaluationAnalyzer.classify_cp_loss(cp_loss)
         messages = {
             "best_move": "You found the strongest move in the position.",
+            "best": "You found the strongest move in the position.",
+            "brilliant": "A brilliant strike — best move with real sacrifice or vision.",
             "excellent": "A very strong move with minimal loss.",
             "good": "A solid move, although stronger options existed.",
             "inaccuracy": "A reasonable move, but it slightly worsened your position.",
             "mistake": "This move significantly reduced your advantage or worsened your position.",
             "blunder": "A serious mistake that likely changed the course of the game.",
         }
-        return {"category": category, "message": messages[category]}
+        return {"category": category, "message": messages.get(category, "Move played.")}
 
 # Scores positions across 11 strategic dimensions
 class PositionalEvaluator:
@@ -2061,227 +1937,9 @@ _DATA_DIR = Path(__file__).resolve().parent / "data"
 _DEFAULT_GM_PGN = _DATA_DIR / "grandmaster_games_1000.pgn"
 
 
-# Summarizes game results into report
-class GameReport:
-
-    # Summarizes move results into overview
-    @staticmethod
-    def summarize(results):
-        summary = {"best_move": 0, "excellent": 0, "good": 0, "inaccuracy": 0, "mistake": 0, "blunder": 0}
-        total_cp_loss = 0
-        for move in results:
-            category = move["classification"]
-            if category in summary:
-                summary[category] += 1
-            total_cp_loss += move["cp_loss"]
-        summary["total_moves"] = len(results)
-        summary["average_cp_loss"] = round(total_cp_loss / len(results), 2) if results else 0
-        return summary
-
-    # Calculates accuracy score from results
-    @staticmethod
-    def accuracy_score(results):
-        if not results:
-            return 0
-        total = sum(max(0, 100 - (move["cp_loss"] / 10)) for move in results)
-        return round(total / len(results), 2)
-
-    # Assigns grade from accuracy score
-    @staticmethod
-    def grade(accuracy):
-        if accuracy >= 95:
-            return "A+"
-        if accuracy >= 90:
-            return "A"
-        if accuracy >= 85:
-            return "A-"
-        if accuracy >= 80:
-            return "B+"
-        if accuracy >= 75:
-            return "B"
-        if accuracy >= 70:
-            return "C"
-        return "Needs Improvement"
-
-# Generates narrative summary from report
-class GameSummary:
-
-    # Generates narrative summary from report
-    @staticmethod
-    def generate(report):
-        text = []
-        text.append(
-            f"You made {report['blunders']} blunders, "
-            f"{report['mistakes']} mistakes and "
-            f"{report['inaccuracies']} inaccuracies."
-        )
-        weaknesses = report["weaknesses"]
-        if weaknesses:
-            text.append("Primary improvement areas:")
-            for weakness in weaknesses:
-                text.append(f"- {weakness}")
-        else:
-            text.append("No major recurring weakness detected.")
-        return "\n".join(text)
-
-# Detects recurring weaknesses from moves
-class WeaknessDetector:
-
-    # Detects weaknesses from move results
-    @staticmethod
-    def detect(move_results):
-        weaknesses = []
-        inaccuracies = 0
-        mistakes = 0
-        blunders = 0
-        development_errors = 0
-        center_errors = 0
-        king_safety_errors = 0
-
-        for move in move_results:
-            category = move["classification"]
-            if category == "inaccuracy":
-                inaccuracies += 1
-            elif category == "mistake":
-                mistakes += 1
-            elif category == "blunder":
-                blunders += 1
-
-            for concept in move.get("concepts", []):
-                concept = concept.lower()
-                if "development" in concept:
-                    development_errors += 1
-                elif "center" in concept:
-                    center_errors += 1
-                elif "king" in concept:
-                    king_safety_errors += 1
-
-        if development_errors >= 3:
-            weaknesses.append("Development")
-        if center_errors >= 3:
-            weaknesses.append("Center Control")
-        if king_safety_errors >= 3:
-            weaknesses.append("King Safety")
-
-        return {"inaccuracies": inaccuracies, "mistakes": mistakes, "blunders": blunders, "weaknesses": weaknesses}
-
-# Analyzes player style from moves
-class StyleAnalyzer:
-
-    # Analyzes style from move results
-    @staticmethod
-    def analyze(move_results):
-        aggressive = 0
-        positional = 0
-        defensive = 0
-
-        for move in move_results:
-            raw_concepts = move.get("concepts", [])
-            concepts = [str(c).lower() for c in raw_concepts]
-
-            if any("attack" in c or "initiative" in c for c in concepts):
-                aggressive += 1
-            if any("center" in c or "central" in c or "development" in c or "space" in c for c in concepts):
-                positional += 1
-            if any("king safety" in c or "defense" in c or "castl" in c for c in concepts):
-                defensive += 1
-
-        scores = {"Aggressive": aggressive, "Positional": positional, "Defensive": defensive}
-        style = max(scores, key=scores.get)
-        return {"style": style, "type": style, "scores": scores}
-
-# Generates training plan from weaknesses
-class TrainingPlan:
-
-    # Generates training plan from weaknesses
-    @staticmethod
-    def generate(weaknesses):
-        recommendations = []
-
-        for weakness in weaknesses:
-            if weakness == "Development":
-                recommendations.append({
-                    "topic": "Development",
-                    "daily_minutes": 20,
-                    "advice": "Develop knights and bishops before launching attacks.",
-                    "exercise": "Play 10 opening positions focusing on rapid development.",
-                })
-            elif weakness == "Center Control":
-                recommendations.append({
-                    "topic": "Center Control",
-                    "daily_minutes": 20,
-                    "advice": "Fight for e4, d4, e5 and d5 squares.",
-                    "exercise": "Review classical openings and identify center-controlling moves.",
-                })
-            elif weakness == "King Safety":
-                recommendations.append({
-                    "topic": "King Safety",
-                    "daily_minutes": 20,
-                    "advice": "Castle earlier and avoid weakening your king.",
-                    "exercise": "Analyze 5 games where delayed castling caused problems.",
-                })
-
-        if not recommendations:
-            recommendations.append({
-                "topic": "General Improvement",
-                "daily_minutes": 15,
-                "advice": "Continue playing and reviewing games.",
-                "exercise": "Analyze one game daily.",
-            })
-
-        return recommendations
-
-# Recommends openings for player style
-class OpeningRecommender:
-
-    # Recommends opening for style
-    @staticmethod
-    def recommend(player_style):
-        openings = {
-            "Aggressive": ["Sicilian Defense", "King's Indian Defense", "Vienna Game"],
-            "Positional": ["Queen's Gambit", "Ruy Lopez", "Catalan Opening"],
-            "Defensive": ["Caro-Kann Defense", "French Defense", "London System"],
-        }
-        return openings.get(player_style, ["Italian Game", "London System"])
-
-# Detects opening from PGN path
-class OpeningDetector:
-
-    OPENINGS = {
-        "e4 e5 Nf3 Nc6 Bc4": "Italian Game",
-        "e4 e5 Nf3 Nc6 Bb5": "Ruy Lopez",
-        "d4 d5 c4": "Queen's Gambit",
-        "d4 Nf6 Bf4": "London System",
-        "e4 c5": "Sicilian Defense",
-        "e4 e6": "French Defense",
-        "e4 c6": "Caro-Kann Defense",
-        "d4 Nf6 c4 g6": "King's Indian Defense",
-        "d4 Nf6 c4 e6 Nc3 Bb4": "Nimzo-Indian Defense",
-    }
-
-    # Detects opening from PGN file
-    @staticmethod
-    def detect(pgn_path):
-        try:
-            with open(pgn_path, encoding="utf-8") as pgn_file:
-                game = chess.pgn.read_game(pgn_file)
-            if game is None:
-                return "Unknown Opening"
-
-            board = game.board()
-            san_moves = []
-            for move in game.mainline_moves():
-                san_moves.append(board.san(move))
-                board.push(move)
-                current_line = " ".join(san_moves)
-                for pattern, opening in OpeningDetector.OPENINGS.items():
-                    if current_line.startswith(pattern):
-                        return opening
-                if len(san_moves) >= 10:
-                    break
-            return "Unknown Opening"
-        except Exception:
-            return "Unknown Opening"
+# Re-exports review-match report helpers
+from review import GameReport, GameSummary, WeaknessDetector, StyleAnalyzer
+from review import TrainingPlan, OpeningRecommender, OpeningDetector
 
 # Matches positions against GM game database
 class GMHistoricalMatcher:
@@ -2400,55 +2058,8 @@ class GMHistoricalMatcher:
             "description": "Unique position. No direct classical Grandmaster database match found.",
         }
 
-# Generates PDF report from data
-class PDFReport:
-
-    # Generates PDF file from report data
-    @staticmethod
-    def generate(output_path, report_data):
-        if not REPORTLAB_AVAILABLE:
-            raise RuntimeError("reportlab is not installed. Install with: pip install reportlab")
-
-        dir_name = os.path.dirname(output_path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-
-        doc = SimpleDocTemplate(output_path)
-        styles = getSampleStyleSheet()
-        content = []
-
-        content.append(Paragraph("AI Chess Coach Report", styles["Title"]))
-        content.append(Spacer(1, 12))
-
-        content.append(Paragraph(f"Opening: {report_data['opening']}", styles["Heading2"]))
-        content.append(Paragraph(f"Accuracy: {report_data['accuracy']}%", styles["BodyText"]))
-        content.append(Paragraph(f"Grade: {report_data['grade']}", styles["BodyText"]))
-        content.append(Paragraph(f"Style: {report_data['style']}", styles["BodyText"]))
-        content.append(Spacer(1, 20))
-
-        content.append(Paragraph("Weaknesses", styles["Heading2"]))
-        for weakness in report_data["weaknesses"]:
-            content.append(Paragraph(f"* {weakness}", styles["BodyText"]))
-        content.append(Spacer(1, 20))
-
-        content.append(Paragraph("Training Plan", styles["Heading2"]))
-        for item in report_data["training_plan"]:
-            content.append(Paragraph(item["topic"], styles["Heading3"]))
-            content.append(Paragraph(item["advice"], styles["BodyText"]))
-            content.append(Paragraph(item["exercise"], styles["BodyText"]))
-            content.append(Spacer(1, 10))
-
-        content.append(PageBreak())
-
-        content.append(Paragraph("Move Analysis", styles["Heading1"]))
-        for move in report_data["moves"]:
-            content.append(Paragraph(f"Move {move['move_number']}: {move['move']}", styles["Heading3"]))
-            content.append(Paragraph(f"Classification: {move['classification']}", styles["BodyText"]))
-            content.append(Paragraph(f"CP Loss: {move['cp_loss']}", styles["BodyText"]))
-            content.append(Spacer(1, 8))
-
-        doc.build(content)
-        return output_path
+# Re-exports review-match PDF helper
+from review import PDFReport, REPORTLAB_AVAILABLE
 
 # Section analysis/simulation
 
@@ -2988,106 +2599,5 @@ class FutureSimulator:
             "why": why_reasons,
         }
 
-# Analyzes full PGN games with eval and concepts
-class GameAnalyzer:
-
-    # Analyzes full game from PGN path
-    @staticmethod
-    async def analyze_game(stockfish, pgn_path):
-        results = []
-
-        with open(pgn_path, encoding="utf-8") as pgn_file:
-            game = chess.pgn.read_game(pgn_file)
-
-        if game is None:
-            raise ValueError("Invalid PGN file.")
-
-        board = game.board()
-        ply = 1
-
-        for move in game.mainline_moves():
-            fen_before = board.fen()
-            move_uci = move.uci()
-            move_san = board.san(move)
-            turn_name = "White" if board.turn == chess.WHITE else "Black"
-            fullmove_number = (ply + 1) // 2
-            move_label = f"{fullmove_number}." if board.turn == chess.WHITE else f"{fullmove_number}..."
-
-            best_move_uci = None
-            best_move_san = ""
-            try:
-                best_move_uci = await stockfish.best_move(fen_before, depth=10)
-                if best_move_uci:
-                    best_move_obj = chess.Move.from_uci(best_move_uci)
-                    if best_move_obj in board.legal_moves:
-                        best_move_san = board.san(best_move_obj)
-                    else:
-                        best_move_san = best_move_uci
-            except Exception:
-                best_move_uci = move_uci
-                best_move_san = move_san
-
-            if not best_move_uci:
-                best_move_uci = move_uci
-                best_move_san = move_san
-
-            try:
-                before_white = await stockfish.evaluate(fen_before, depth=10)
-                temp_board = board.copy()
-                temp_board.push(move)
-                after_white = await stockfish.evaluate(temp_board.fen(), depth=10)
-
-                if board.turn == chess.WHITE:
-                    cp_diff = (before_white - after_white) * 100.0
-                    before_pov_cp = before_white * 100.0
-                    after_pov_cp = after_white * 100.0
-                else:
-                    cp_diff = (after_white - before_white) * 100.0
-                    before_pov_cp = -before_white * 100.0
-                    after_pov_cp = -after_white * 100.0
-
-                cp_loss = max(0.0, round(cp_diff, 2))
-                accuracy_score = EvaluationAnalyzer.calculate_accuracy(
-                    EvaluationAnalyzer.win_probability(before_pov_cp),
-                    EvaluationAnalyzer.win_probability(after_pov_cp),
-                )
-                eval_result = {
-                    "before": round(before_white, 2), "after": round(after_white, 2),
-                    "cp_loss": cp_loss, "accuracy_score": accuracy_score,
-                    "win_probability_before": EvaluationAnalyzer.win_probability(before_pov_cp),
-                    "win_probability_after": EvaluationAnalyzer.win_probability(after_pov_cp),
-                }
-            except Exception:
-                cp_loss = 0.0
-                eval_result = {"before": 0.0, "after": 0.0, "cp_loss": 0.0, "accuracy_score": 100.0,
-                               "win_probability_before": 50.0, "win_probability_after": 50.0}
-
-            classification = EvaluationAnalyzer.classify(cp_loss)
-            if move_uci == best_move_uci:
-                classification = {"category": "best_move", "message": "You found the strongest move in the position."}
-
-            from intelligence import get_concepts
-            concept_data = get_concepts(move=move_uci, board=board, move_obj=move, best_move_uci=best_move_uci)
-
-            board.push(move)
-            fen_after = board.fen()
-
-            results.append({
-                "ply": ply, "fullmove_number": fullmove_number, "move_number": fullmove_number,
-                "move_label": move_label, "turn": turn_name, "san": move_san, "move": move_uci,
-                "best_move": best_move_uci, "best_move_san": best_move_san,
-                "is_best": (move_uci == best_move_uci),
-                "eval_before": eval_result.get("before", 0.0), "eval_after": eval_result.get("after", 0.0),
-                "cp_loss": cp_loss, "accuracy_score": eval_result.get("accuracy_score", 100.0),
-                "win_probability_before": eval_result.get("win_probability_before", 50.0),
-                "win_probability_after": eval_result.get("win_probability_after", 50.0),
-                "classification": classification["category"],
-                "classification_msg": classification.get("message", ""),
-                "concepts": concept_data.get("concepts", []),
-                "explanation": concept_data.get("explanation", ""),
-                "fen_before": fen_before, "fen_after": fen_after,
-            })
-
-            ply += 1
-
-        return results
+# Re-exports review-match game analyzer
+from review import GameAnalyzer

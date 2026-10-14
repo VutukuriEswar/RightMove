@@ -1,14 +1,24 @@
 import React, { memo, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { CLASSIFICATION_META } from '../../lib/chessUtils';
+import { CLASSIFICATION_META, normalizeClassification } from '../../lib/chessUtils';
 
 const MoveList = memo(function MoveList({ moves, activeIndex = null, onMoveClick }) {
   const bodyRef = useRef(null);
   const bottomRef = useRef(null);
+  const activeRef = useRef(null);
 
   useEffect(() => {
-    if (activeIndex === null && bodyRef.current) {
+    if (!bodyRef.current) return;
+    if (activeIndex === null) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+      return;
+    }
+    if (activeRef.current && activeRef.current.scrollIntoView) {
+      try {
+        activeRef.current.scrollIntoView({ block: 'nearest' });
+      } catch (_) {
+        bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+      }
     }
   }, [moves.length, activeIndex]);
 
@@ -34,6 +44,7 @@ const MoveList = memo(function MoveList({ moves, activeIndex = null, onMoveClick
           return (
             <motion.div
               key={pairIdx}
+              ref={activeIndex === whiteMoveIdx || activeIndex === blackMoveIdx ? activeRef : undefined}
               className="move-pair"
               initial={{ opacity: 0, x: -4 }}
               animate={{ opacity: 1, x: 0 }}
@@ -61,7 +72,8 @@ const MoveList = memo(function MoveList({ moves, activeIndex = null, onMoveClick
 
 function MoveCell({ move, isActive, onClick }) {
   if (!move) return <span className="move-cell empty" />;
-  const meta = move.classification ? CLASSIFICATION_META[move.classification] : null;
+  const key = normalizeClassification(move.classification);
+  const meta = CLASSIFICATION_META[key];
 
   return (
     <button

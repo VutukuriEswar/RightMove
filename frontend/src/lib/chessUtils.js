@@ -3,12 +3,40 @@ import { Chess } from 'chess.js';
 export const CLASSIFICATION_META = {
   brilliant:  { label: 'Brilliant',  emoji: '!!', color: 'var(--color-brilliant)' },
   best:       { label: 'Best',       emoji: '!',  color: 'var(--color-best)' },
+  best_move:  { label: 'Best',       emoji: '!',  color: 'var(--color-best)' },
   excellent:  { label: 'Excellent',  emoji: '!',  color: 'var(--color-excellent)' },
   good:       { label: 'Good',       emoji: '',   color: 'var(--color-good)' },
   inaccuracy: { label: 'Inaccuracy', emoji: '?!', color: 'var(--color-inaccuracy)' },
   mistake:    { label: 'Mistake',    emoji: '?',  color: 'var(--color-mistake)' },
   blunder:    { label: 'Blunder',    emoji: '??', color: 'var(--color-blunder)' },
 };
+
+export function normalizeClassification(c) {
+  const v = String(c || 'good').toLowerCase();
+  if (v === 'best_move' || v === 'best move') return 'best';
+  return CLASSIFICATION_META[v] ? v : 'good';
+}
+
+export function accuracyGrade(pct) {
+  const v = Number(pct ?? 0);
+  if (v >= 95) return 'Brilliant';
+  if (v >= 85) return 'Great';
+  if (v >= 70) return 'Good';
+  if (v >= 55) return 'Inaccurate';
+  return 'Blundered';
+}
+
+export function accuracyLetter(pct) {
+  const v = Number(pct ?? 0);
+  if (v >= 95) return 'A+';
+  if (v >= 90) return 'A';
+  if (v >= 85) return 'A-';
+  if (v >= 80) return 'B+';
+  if (v >= 75) return 'B';
+  if (v >= 70) return 'C';
+  if (v >= 55) return 'D';
+  return 'Needs Improvement';
+}
 
 export function buildPositions(sanMoves) {
   const chess = new Chess();
