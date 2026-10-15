@@ -261,6 +261,9 @@ async def create_indexes():
 
     await db.friendships.create_index([("user_id", 1), ("friend_id", 1)], unique=True)
 
+    await db.challenges.create_index([("to_id", 1), ("status", 1)])
+    await db.challenges.create_index([("from_id", 1), ("status", 1)])
+
     await db.game_summaries.create_index("game_id", unique=True)
 
     await db.training_jobs.create_index("job_id", unique=True)
@@ -389,6 +392,13 @@ class GameSummaryPublic(BaseModel):
 # Represents friend request payload
 class FriendRequest(BaseModel):
     username: str
+
+
+# Represents game challenge payload
+class ChallengeRequest(BaseModel):
+    username: str
+    time_control_seconds: int = Field(600, ge=0, le=3600)
+    increment_seconds: int = Field(0, ge=0, le=60)
 
 
 # Represents public friendship data

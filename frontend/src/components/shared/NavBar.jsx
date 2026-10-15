@@ -6,6 +6,8 @@ import { useAuthStore } from '../../store/authStore';
 import { useGameStore } from '../../store/gameStore';
 import { useLeaveGameStore } from '../../store/leaveGameStore';
 import { resignActiveGame, hasActiveGameResigner } from '../../lib/activeGameResign';
+import { useNotifCounts } from '../../hooks/useNotifCounts';
+import { useTrainingBadge } from '../../hooks/useTrainingBadge';
 import { useThemeStore } from '../../store/themeStore';
 
 export function NavBar() {
@@ -20,6 +22,9 @@ export function NavBar() {
   const closeLeaveDialog = useLeaveGameStore((s) => s.closeLeaveDialog);
   const setLeaving = useLeaveGameStore((s) => s.setLeaving);
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const { friend_requests, challenge_requests } = useNotifCounts();
+  const friendTotal = (friend_requests || 0) + (challenge_requests || 0);
+  const trainingNew = useTrainingBadge(user?.role === 'admin');
 
   const handleLogout = () => {
     const inLiveGame =
@@ -75,13 +80,13 @@ export function NavBar() {
           {isLoggedIn && (
             <>
               <li><Link className="interactive" to="/lobby" onClick={() => setMenuOpen(false)}>Play</Link></li>
-              <li><Link className="interactive" to="/friends" onClick={() => setMenuOpen(false)}>Friends</Link></li>
+              <li><Link className="interactive" to="/friends" onClick={() => setMenuOpen(false)}>Friends{friendTotal > 0 && <span className="nav-badge">{friendTotal > 99 ? '99+' : friendTotal}</span>}</Link></li>
               <li><Link className="interactive" to="/learn" onClick={() => setMenuOpen(false)}>Learn</Link></li>
               <li><Link className="interactive" to="/history" onClick={() => setMenuOpen(false)}>History</Link></li>
               {user?.role === 'admin' && (
                 <>
                   <li><Link className="interactive" to="/admin/users" onClick={() => setMenuOpen(false)}>Users</Link></li>
-                  <li><Link className="interactive" to="/admin/training" onClick={() => setMenuOpen(false)}>Training</Link></li>
+                  <li><Link className="interactive" to="/admin/training" onClick={() => setMenuOpen(false)}>Training{trainingNew > 0 && <span className="nav-badge">{trainingNew > 99 ? '99+' : trainingNew}</span>}</Link></li>
                 </>
               )}
             </>

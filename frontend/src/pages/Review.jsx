@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { gamesApi, coachApi, reportApi } from '../lib/api';
 import { buildPositions, buildPgn, formatEval, loadGameLog, moveRecordToSquares, normalizeClassification, accuracyLetter, CLASSIFICATION_META } from '../lib/chessUtils';
 import Board2D from '../components/board/Board2D';
@@ -12,6 +12,7 @@ const CLASS_ORDER = ['brilliant', 'best', 'excellent', 'good', 'inaccuracy', 'mi
 
 export default function Review() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [game, setGame] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -31,6 +32,7 @@ export default function Review() {
   const [moveInsight, setMoveInsight] = useState(null);
   const [moveInsightBusy, setMoveInsightBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [rematchBusy, setRematchBusy] = useState(false);
   const reportRef = useRef(null);
   const insightCache = useRef(new Map());
 
@@ -175,6 +177,26 @@ export default function Review() {
       setCopied(false);
     }
   }, []);
+
+  const handleRematch = useCallback(async () => {
+    if (rematchBusy) return;
+    const friend = playerColor === 'white' ? game?.black_username : game?.white_username;
+    if (!friend) return;
+    setRematchBusy(true);
+    setCoachError(null);
+    try {
+      const { id: newId } = await gamesApi.create({
+        mode: 'friend',
+        friend_username: friend,
+        time_control_seconds: game?.time_control_seconds ?? 600,
+        increment_seconds: game?.increment_seconds ?? 0,
+      });
+      navigate(`/game/${newId}`);
+    } catch (err) {
+      setCoachError(err.message || 'Rematch failed');
+      setRematchBusy(false);
+    }
+  }, [rematchBusy, playerColor, game, navigate]);
 
   const analyzePosition = useCallback(async () => {
     const fen = fens[currentMoveIdx + 1];
@@ -590,6 +612,16 @@ export default function Review() {
           </div>
           <div className="review-actions card">
             <Link to="/history" className="btn btn-secondary" style={{width:'100%',marginBottom:'8px'}}>Match History</Link>
+            {game?.mode === 'friend' && (playerColor === 'white' ? game?.black_username : game?.white_username) && (
+              <button
+                className="btn btn-secondary"
+                style={{width:'100%',marginBottom:'8px'}}
+                disabled={rematchBusy}
+                onClick={handleRematch}
+              >
+                {rematchBusy ? 'Starting...' : '⚔ Rematch Friend'}
+              </button>
+            )}
             <Link to="/lobby" className="btn btn-primary" style={{width:'100%'}}>New Game</Link>
           </div>
         </div>

@@ -13,5 +13,12 @@ export function useAuth() {
     }
   }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    authApi.heartbeat().catch(() => {});
+    const t = setInterval(() => authApi.heartbeat().catch(() => {}), 60000);
+    return () => clearInterval(t);
+  }, [token]);
+
   return { token, user, isLoggedIn: !!token, logout };
 }

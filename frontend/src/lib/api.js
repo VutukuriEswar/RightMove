@@ -38,6 +38,7 @@ export const authApi = {
   login: (email, password) =>
     api.post('/auth/login', { email, password }),
   me: () => api.get('/auth/me'),
+  heartbeat: () => api.post('/auth/heartbeat', {}),
   updateProfile: (updates) => api.patch('/auth/me', updates),
   uploadAvatar: async (file) => {
     const token = useAuthStore.getState().token;
@@ -62,6 +63,7 @@ export const gamesApi = {
   getMyStats: () => api.get('/games/mine/stats'),
   getSummary: (gameId) => api.get(`/games/${gameId}/summary`),
   getMoves: (gameId) => api.get(`/games/${gameId}/moves`),
+  history: (limit = 50, skip = 0) => api.get(`/games/mine/history?limit=${limit}&skip=${skip}`),
   chooseColor: (gameId, player_color) =>
     api.post(`/games/${gameId}/choose-color`, { player_color }),
   updateBotConfig: (gameId, cfg) =>
@@ -132,6 +134,18 @@ export const friendsApi = {
   list: () => api.get('/friends/'),
   sendRequest: (username) => api.post('/friends/request', { username }),
   accept: (username) => api.post('/friends/accept', { username }),
+  decline: (username) => api.post('/friends/request/decline', { username }),
+  cancelRequest: (username) => api.delete(`/friends/request/${encodeURIComponent(username)}`),
+  record: (username) => api.get(`/friends/${encodeURIComponent(username)}/record`),
+  remove: (username) => api.delete(`/friends/${encodeURIComponent(username)}`),
+  challenge: (username, tc = 600, inc = 0) =>
+    api.post('/friends/challenge', { username, time_control_seconds: tc, increment_seconds: inc }),
+  incomingChallenges: () => api.get('/friends/challenges/incoming'),
+  outgoingChallenges: () => api.get('/friends/challenges/outgoing'),
+  acceptChallenge: (id) => api.post(`/friends/challenges/${encodeURIComponent(id)}/accept`, {}),
+  declineChallenge: (id) => api.post(`/friends/challenges/${encodeURIComponent(id)}/decline`, {}),
+  cancelChallenge: (id) => api.delete(`/friends/challenges/${encodeURIComponent(id)}`),
+  notifCounts: () => api.get('/friends/notifications/counts'),
 };
 
 export const coachApi = {

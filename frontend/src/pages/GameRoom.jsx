@@ -96,6 +96,24 @@ export default function GameRoom() {
   const [playersReady, setPlayersReady] = useState(false);
   const [showGameOver, setShowGameOver] = useState(false);
   const [passPlayResignColor, setPassPlayResignColor] = useState(null);
+  const [rematching, setRematching] = useState(false);
+
+  const handleRematch = useCallback(async () => {
+    const opp = useGameStore.getState().opponentUsername;
+    if (!opp || rematching) return;
+    setRematching(true);
+    try {
+      const { id: newId } = await gamesApi.create({
+        mode: 'friend',
+        friend_username: opp,
+        time_control_seconds: timeControlRef.current.tc,
+        increment_seconds: timeControlRef.current.inc,
+      });
+      navigate(`/game/${newId}`);
+    } catch (_) {
+      setRematching(false);
+    }
+  }, [navigate, rematching]);
 
   const [showResumeModal, setShowResumeModal] = useState(false);
   const [startingNew, setStartingNew] = useState(false);
@@ -123,7 +141,7 @@ export default function GameRoom() {
   }, [bothReady, playersReady]);
 
   useEffect(() => {
-    if (gameMode !== 'pass_and_play' || !playersReady || !gameActive) return;
+    if (gameMode !== 'pass_and_play' || !playersReady || result !== null) return;
     const cur = fen.split(' ')[1] === 'w' ? 'white' : 'black';
     if (prevActiveColorRef.current !== null && prevActiveColorRef.current !== cur) {
 
@@ -133,7 +151,7 @@ export default function GameRoom() {
     }
     prevActiveColorRef.current = cur;
 
-  }, [fen, gameMode, playersReady, gameActive]);
+  }, [fen, gameMode, playersReady, result]);
 
   useEffect(() => () => { if (flipTimerRef.current) clearTimeout(flipTimerRef.current); }, []);
 
@@ -459,6 +477,16 @@ export default function GameRoom() {
           >
             Go Home
           </button>
+          {gameMode === 'friend' && opponentUsername && (
+            <button
+              className="btn-neon interactive"
+              style={{ flex: 1, padding: '12px 0' }}
+              disabled={rematching}
+              onClick={handleRematch}
+            >
+              {rematching ? '...' : '⚔ Rematch'}
+            </button>
+          )}
         </div>
       </div>
     </div>,

@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from core import GameDoc
 from core import CreateGameRequest, GamePublic, GameSummaryPublic, UserStatsPublic
 from core import FriendshipDoc
-from core import FriendRequest, FriendshipPublic
+from core import FriendRequest, FriendshipPublic, ChallengeRequest
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from engines import analyze_position
@@ -48,7 +48,7 @@ from intelligence import PositionalEvaluator
 from engines import eval_to_win_prob
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 
@@ -137,6 +137,16 @@ async def login(body: LoginRequest):
 @auth_router.get("/me", response_model=UserPublic)
 async def get_me(current_user: dict = Depends(get_current_user)):
     return _to_public(current_user)
+
+# Records user activity heartbeat
+@auth_router.post("/heartbeat")
+async def heartbeat(current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    await db.users.update_one(
+        {"_id": current_user["_id"]},
+        {"$set": {"last_seen": datetime.now(timezone.utc)}},
+    )
+    return {"status": "ok"}
 
 # Updates current user profile
 @auth_router.patch("/me", response_model=UserPublic)
@@ -294,6 +304,71 @@ async def get_my_stats(current_user: dict = Depends(get_current_user)):
     return UserStatsPublic(
         wins=wins, draws=draws, losses=losses, games_played=wins + draws + losses
     )
+
+# Lists finished games for current user
+@games_router.get("/mine/history")
+async def get_my_history(
+    limit: int = 50,
+    skip: int = 0,
+    current_user: dict = Depends(get_current_user),
+):
+    from bson import ObjectId as _OID
+    db = get_db()
+    user_id = str(current_user["_id"])
+    limit = max(1, min(int(limit or 50), 100))
+    skip = max(0, int(skip or 0))
+
+    cursor = db.games.find(
+        {
+            "$or": [{"white_id": user_id}, {"black_id": user_id}],
+            "result": {"$in": ["white", "black", "draw", "aborted"]},
+        },
+        {"white_id": 1, "black_id": 1, "mode": 1, "result": 1,
+         "started_at": 1, "time_control_seconds": 1, "increment_seconds": 1, "moves": 1},
+    ).sort("started_at", -1).skip(skip).limit(limit)
+    docs = await cursor.to_list(limit)
+
+    ids = set()
+    for g in docs:
+        for k in ("white_id", "black_id"):
+            v = g.get(k)
+            if v and v != user_id and v != "None":
+                ids.add(v)
+    names = {}
+    if ids:
+        try:
+            oids = [ _OID(i) for i in ids ]
+            async for u in db.users.find({"_id": {"$in": oids}}, {"username": 1}):
+                names[str(u["_id"])] = u["username"]
+        except Exception:
+            pass
+
+    out = []
+    for g in docs:
+        res = g.get("result")
+        if res == "draw":
+            mine = "draw"
+        elif (res == "white" and g.get("white_id") == user_id) or (
+            res == "black" and g.get("black_id") == user_id
+        ):
+            mine = "win"
+        else:
+            mine = "loss"
+        opp_id = g.get("black_id") if g.get("white_id") == user_id else g.get("white_id")
+        out.append({
+            "id": str(g["_id"]),
+            "mode": g.get("mode"),
+            "result": res,
+            "mine": mine,
+            "opponent": names.get(opp_id) if opp_id else None,
+            "opponent_id": opp_id,
+            "started_at": g.get("started_at"),
+            "time_control_seconds": g.get("time_control_seconds", 600),
+            "increment_seconds": g.get("increment_seconds", 0),
+            "moves_count": len(g.get("moves") or []),
+            "has_moves": bool(g.get("moves")),
+        })
+    return {"games": out, "limit": limit, "skip": skip}
 
 # Fetches game by identifier
 @games_router.get("/{game_id}", response_model=GamePublic)
@@ -525,6 +600,35 @@ async def update_bot_config(game_id: str, body: dict, current_user: dict = Depen
 friends_router = APIRouter(prefix="/friends", tags=["friends"])
 
 
+# Checks whether last heartbeat counts as online
+def _is_online(last_seen) -> bool:
+    if not last_seen:
+        return False
+    try:
+        now = datetime.now(timezone.utc)
+        seen = last_seen
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=timezone.utc)
+        return (now - seen).total_seconds() < 180
+    except Exception:
+        return False
+
+
+# Expires stale pending challenges
+async def _sweep_challenges(db):
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    except Exception:
+        return
+    try:
+        await db.challenges.update_many(
+            {"status": "pending", "created_at": {"$lt": cutoff}},
+            {"$set": {"status": "expired"}},
+        )
+    except Exception:
+        pass
+
+
 # Sends friend request to user
 @friends_router.post("/request", status_code=201)
 async def send_friend_request(body: FriendRequest, current_user: dict = Depends(get_current_user)):
@@ -538,6 +642,29 @@ async def send_friend_request(body: FriendRequest, current_user: dict = Depends(
 
     if friend_id == user_id:
         raise HTTPException(status_code=400, detail="Cannot friend yourself")
+
+    reverse_pending = await db.friendships.find_one(
+        {"user_id": friend_id, "friend_id": user_id, "status": "pending"}
+    )
+    if reverse_pending:
+        await db.friendships.update_one(
+            {"user_id": friend_id, "friend_id": user_id, "status": "pending"},
+            {"$set": {"status": "accepted"}},
+        )
+        reverse = await db.friendships.find_one({"user_id": user_id, "friend_id": friend_id})
+        if not reverse:
+            reverse_doc = FriendshipDoc(user_id=user_id, friend_id=friend_id, status="accepted")
+            await db.friendships.insert_one(reverse_doc.model_dump())
+        return {"status": "accepted", "friend_id": friend_id}
+
+    already = await db.friendships.find_one({
+        "$or": [
+            {"user_id": user_id, "friend_id": friend_id, "status": "accepted"},
+            {"user_id": friend_id, "friend_id": user_id, "status": "accepted"},
+        ]
+    })
+    if already:
+        raise HTTPException(status_code=409, detail="Already friends")
 
     existing = await db.friendships.find_one({"user_id": user_id, "friend_id": friend_id})
     if existing:
@@ -572,6 +699,40 @@ async def accept_friend_request(body: FriendRequest, current_user: dict = Depend
 
     return {"status": "accepted"}
 
+# Declines pending friend request
+@friends_router.post("/request/decline")
+async def decline_friend_request(body: FriendRequest, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    user_id = str(current_user["_id"])
+
+    requester = await db.users.find_one({"username": body.username})
+    if not requester:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    result = await db.friendships.delete_one(
+        {"user_id": str(requester["_id"]), "friend_id": user_id, "status": "pending"}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="No pending request from this user")
+    return {"status": "declined"}
+
+# Cancels outgoing friend request
+@friends_router.delete("/request/{username}")
+async def cancel_friend_request(username: str, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    user_id = str(current_user["_id"])
+
+    target = await db.users.find_one({"username": username})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    result = await db.friendships.delete_one(
+        {"user_id": user_id, "friend_id": str(target["_id"]), "status": "pending"}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="No outgoing request to this user")
+    return {"status": "cancelled"}
+
 # Lists friendships for current user
 @friends_router.get("/")
 async def list_friends(current_user: dict = Depends(get_current_user)):
@@ -594,6 +755,7 @@ async def list_friends(current_user: dict = Depends(get_current_user)):
                 "friend_id": f["friend_id"],
                 "username": friend_doc["username"],
                 "status": "accepted",
+                "is_online": _is_online(friend_doc.get("last_seen")),
             })
 
     # Pending incoming requests (someone sent a request to current user)
@@ -610,7 +772,379 @@ async def list_friends(current_user: dict = Depends(get_current_user)):
                 "user_id": r["user_id"],
             })
 
-    return {"friends": friends, "pending_requests": pending_requests}
+    # Pending outgoing requests (current user is waiting on these users)
+    outgoing_pending = await db.friendships.find(
+        {"user_id": user_id, "status": "pending"}
+    ).to_list(100)
+
+    sent_requests = []
+    for r in outgoing_pending:
+        target_doc = await db.users.find_one({"_id": ObjectId(r["friend_id"])})
+        if target_doc:
+            sent_requests.append({"username": target_doc["username"]})
+
+    return {"friends": friends, "pending_requests": pending_requests, "sent_requests": sent_requests}
+
+# Removes friendship in both directions
+@friends_router.delete("/{username}")
+async def remove_friend(username: str, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    user_id = str(current_user["_id"])
+
+    target = await db.users.find_one({"username": username})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    friend_id = str(target["_id"])
+
+    await db.friendships.delete_many({
+        "$or": [
+            {"user_id": user_id, "friend_id": friend_id},
+            {"user_id": friend_id, "friend_id": user_id},
+        ]
+    })
+    return {"status": "removed"}
+
+# Returns head-to-head record against friend
+@friends_router.get("/{username}/record")
+async def friend_record(username: str, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    user_id = str(current_user["_id"])
+
+    target = await db.users.find_one({"username": username})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    friend_id = str(target["_id"])
+
+    friendship = await db.friendships.find_one({
+        "$or": [
+            {"user_id": user_id, "friend_id": friend_id, "status": "accepted"},
+            {"user_id": friend_id, "friend_id": user_id, "status": "accepted"},
+        ]
+    })
+    if not friendship:
+        raise HTTPException(status_code=403, detail="Not friends with this user")
+
+    total = await db.games.count_documents({
+        "$and": [
+            {"$or": [{"white_id": user_id}, {"black_id": user_id}]},
+            {"$or": [{"white_id": friend_id}, {"black_id": friend_id}]},
+            {"result": {"$in": ["white", "black", "draw"]}},
+        ]
+    })
+
+    cursor = db.games.find(
+        {
+            "$and": [
+                {"$or": [{"white_id": user_id}, {"black_id": user_id}]},
+                {"$or": [{"white_id": friend_id}, {"black_id": friend_id}]},
+                {"result": {"$in": ["white", "black", "draw"]}},
+            ]
+        },
+        {"white_id": 1, "black_id": 1, "result": 1, "mode": 1, "started_at": 1, "moves": 1},
+    ).sort("started_at", -1).limit(50)
+    recent_games = await cursor.to_list(50)
+
+    def _mine(g):
+        res = g.get("result")
+        if res == "draw":
+            return "draw"
+        if (res == "white" and g.get("white_id") == user_id) or (
+            res == "black" and g.get("black_id") == user_id
+        ):
+            return "win"
+        return "loss"
+
+    wins = draws = losses = 0
+    all_cursor = db.games.find(
+        {
+            "$and": [
+                {"$or": [{"white_id": user_id}, {"black_id": user_id}]},
+                {"$or": [{"white_id": friend_id}, {"black_id": friend_id}]},
+                {"result": {"$in": ["white", "black", "draw"]}},
+            ]
+        },
+        {"white_id": 1, "black_id": 1, "result": 1},
+    )
+    async for g in all_cursor:
+        r = _mine(g)
+        if r == "win":
+            wins += 1
+        elif r == "draw":
+            draws += 1
+        else:
+            losses += 1
+
+    streak = {"type": None, "count": 0}
+    for g in recent_games:
+        r = _mine(g)
+        if r == "draw":
+            break
+        if streak["type"] is None:
+            streak = {"type": r, "count": 1}
+        elif streak["type"] == r:
+            streak["count"] += 1
+        else:
+            break
+
+    form = [_mine(g) for g in list(reversed(recent_games[:5]))]
+
+    last_played = None
+    first_met = None
+    if recent_games:
+        last_played = recent_games[0].get("started_at")
+    oldest = await db.games.find(
+        {
+            "$and": [
+                {"$or": [{"white_id": user_id}, {"black_id": user_id}]},
+                {"$or": [{"white_id": friend_id}, {"black_id": friend_id}]},
+                {"result": {"$in": ["white", "black", "draw"]}},
+            ]
+        },
+        {"started_at": 1},
+    ).sort("started_at", 1).limit(1).to_list(1)
+    if oldest:
+        first_met = oldest[0].get("started_at")
+
+    diff = wins - losses
+    if total < 3:
+        title = "New Rivalry"
+    elif diff == 0:
+        title = "Dead Even"
+    elif diff >= 5:
+        title = "Dominant"
+    elif diff >= 2:
+        title = "Ahead"
+    elif diff <= -5:
+        title = "Nemesis"
+    elif diff <= -2:
+        title = "Trailing"
+    else:
+        title = "Even Battle"
+
+    milestones = []
+    if total >= 50:
+        milestones.append("50 battles")
+    elif total >= 25:
+        milestones.append("25 battles")
+    elif total >= 10:
+        milestones.append("10 battles")
+    if streak["type"] == "win" and streak["count"] >= 3:
+        milestones.append(f"{streak['count']}-game win streak")
+
+    opener_counts = {}
+    opener_games = 0
+    for g in recent_games:
+        mv = g.get("moves") or []
+        if mv and mv[0].get("san"):
+            opener_counts[mv[0]["san"]] = opener_counts.get(mv[0]["san"], 0) + 1
+            opener_games += 1
+    favorite_opener = None
+    if opener_counts:
+        top = max(opener_counts.items(), key=lambda kv: kv[1])
+        favorite_opener = {"move": top[0], "times": top[1], "of_games": opener_games}
+
+    recent = []
+    for g in list(reversed(recent_games[:5])):
+        recent.append({
+            "id": str(g["_id"]),
+            "mine": _mine(g),
+            "result": g.get("result"),
+            "mode": g.get("mode"),
+            "started_at": g.get("started_at"),
+        })
+
+    played = wins + losses + draws
+    return {
+        "username": username,
+        "matches": total,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "win_rate": round(wins / played * 100, 1) if played else 0.0,
+        "streak": streak,
+        "form": form,
+        "title": title,
+        "milestones": milestones,
+        "last_played": last_played,
+        "first_met": first_met,
+        "favorite_opener": favorite_opener,
+        "recent": recent,
+    }
+
+# Sends game challenge to friend
+@friends_router.post("/challenge", status_code=201)
+async def send_challenge(body: ChallengeRequest, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    user_id = str(current_user["_id"])
+
+    target = await db.users.find_one({"username": body.username})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    friend_id = str(target["_id"])
+    if friend_id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot challenge yourself")
+
+    friendship = await db.friendships.find_one({
+        "$or": [
+            {"user_id": user_id, "friend_id": friend_id, "status": "accepted"},
+            {"user_id": friend_id, "friend_id": user_id, "status": "accepted"},
+        ]
+    })
+    if not friendship:
+        raise HTTPException(status_code=403, detail="Not friends with this user")
+
+    await _sweep_challenges(db)
+    dup = await db.challenges.find_one({
+        "$or": [
+            {"from_id": user_id, "to_id": friend_id, "status": "pending"},
+            {"from_id": friend_id, "to_id": user_id, "status": "pending"},
+        ]
+    })
+    if dup:
+        raise HTTPException(status_code=409, detail="A challenge is already pending between you")
+
+    doc = {
+        "from_id": user_id,
+        "from_username": current_user["username"],
+        "to_id": friend_id,
+        "to_username": body.username,
+        "time_control_seconds": body.time_control_seconds,
+        "increment_seconds": body.increment_seconds,
+        "status": "pending",
+        "game_id": None,
+        "created_at": datetime.now(timezone.utc),
+    }
+    res = await db.challenges.insert_one(doc)
+    return {"status": "pending", "challenge_id": str(res.inserted_id)}
+
+# Lists incoming pending challenges
+@friends_router.get("/challenges/incoming")
+async def incoming_challenges(current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    await _sweep_challenges(db)
+    cursor = db.challenges.find(
+        {"to_id": str(current_user["_id"]), "status": "pending"}
+    ).sort("created_at", -1).limit(50)
+    docs = await cursor.to_list(50)
+    return {"challenges": [
+        {
+            "id": str(d["_id"]),
+            "from_username": d.get("from_username"),
+            "time_control_seconds": d.get("time_control_seconds", 600),
+            "increment_seconds": d.get("increment_seconds", 0),
+            "created_at": d.get("created_at"),
+        }
+        for d in docs
+    ]}
+
+# Lists outgoing pending challenges
+@friends_router.get("/challenges/outgoing")
+async def outgoing_challenges(current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    await _sweep_challenges(db)
+    cursor = db.challenges.find(
+        {"from_id": str(current_user["_id"]), "status": "pending"}
+    ).sort("created_at", -1).limit(50)
+    docs = await cursor.to_list(50)
+    return {"challenges": [
+        {
+            "id": str(d["_id"]),
+            "to_username": d.get("to_username"),
+            "time_control_seconds": d.get("time_control_seconds", 600),
+            "increment_seconds": d.get("increment_seconds", 0),
+            "created_at": d.get("created_at"),
+        }
+        for d in docs
+    ]}
+
+# Accepts challenge and creates game
+@friends_router.post("/challenges/{challenge_id}/accept")
+async def accept_challenge(challenge_id: str, current_user: dict = Depends(get_current_user)):
+    from bson import ObjectId as _OID
+    try:
+        oid = _OID(challenge_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Challenge not found")
+    db = get_db()
+    user_id = str(current_user["_id"])
+
+    await _sweep_challenges(db)
+    doc = await db.challenges.find_one({"_id": oid})
+    if not doc or doc.get("to_id") != user_id or doc.get("status") != "pending":
+        raise HTTPException(status_code=404, detail="Challenge not available")
+
+    game_dict = {
+        "white_id": doc["from_id"],
+        "black_id": user_id,
+        "mode": "friend",
+        "bot_engine": None,
+        "bot_level": None,
+        "bot_depth": None,
+        "maia_elo": None,
+        "player_color": None,
+        "training_mode": False,
+        "result": "ongoing",
+        "started_at": datetime.now(timezone.utc),
+        "ended_at": None,
+        "time_control_seconds": doc.get("time_control_seconds", 600),
+        "increment_seconds": doc.get("increment_seconds", 0),
+    }
+    res = await db.games.insert_one(game_dict)
+    await db.challenges.update_one(
+        {"_id": oid},
+        {"$set": {"status": "accepted", "game_id": str(res.inserted_id)}},
+    )
+    return {"status": "accepted", "game_id": str(res.inserted_id)}
+
+# Declines incoming challenge
+@friends_router.post("/challenges/{challenge_id}/decline")
+async def decline_challenge(challenge_id: str, current_user: dict = Depends(get_current_user)):
+    from bson import ObjectId as _OID
+    try:
+        oid = _OID(challenge_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Challenge not found")
+    db = get_db()
+
+    result = await db.challenges.update_one(
+        {"_id": oid, "to_id": str(current_user["_id"]), "status": "pending"},
+        {"$set": {"status": "declined"}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Challenge not available")
+    return {"status": "declined"}
+
+# Cancels outgoing challenge
+@friends_router.delete("/challenges/{challenge_id}")
+async def cancel_challenge(challenge_id: str, current_user: dict = Depends(get_current_user)):
+    from bson import ObjectId as _OID
+    try:
+        oid = _OID(challenge_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Challenge not found")
+    db = get_db()
+
+    result = await db.challenges.update_one(
+        {"_id": oid, "from_id": str(current_user["_id"]), "status": "pending"},
+        {"$set": {"status": "cancelled"}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Challenge not available")
+    return {"status": "cancelled"}
+
+# Returns notification counts for inbox badge
+@friends_router.get("/notifications/counts")
+async def notification_counts(current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    user_id = str(current_user["_id"])
+    await _sweep_challenges(db)
+    friend_requests = await db.friendships.count_documents(
+        {"friend_id": user_id, "status": "pending"}
+    )
+    challenge_requests = await db.challenges.count_documents(
+        {"to_id": user_id, "status": "pending"}
+    )
+    return {"friend_requests": friend_requests, "challenge_requests": challenge_requests}
 
 # Section api/analysis
 

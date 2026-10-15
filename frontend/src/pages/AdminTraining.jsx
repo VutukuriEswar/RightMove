@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { adminApi } from '../lib/api';
+import { markTrainingSeen } from '../hooks/useTrainingBadge';
 
 const SLIDERS = [
   { key: 'epochs', label: 'Epochs', min: 1, max: 20, step: 1 },
@@ -34,6 +35,7 @@ export default function AdminTraining() {
     try {
       const data = await adminApi.listJobs();
       setJobs(data.jobs || []);
+      markTrainingSeen(data.jobs || []);
     } catch (e) { setError(e.message || 'Failed to load jobs'); }
   };
 
