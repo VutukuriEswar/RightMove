@@ -84,22 +84,6 @@ def classify_move(eval_before_cp: float, eval_after_cp: float, is_white_to_move:
     return "blunder"
 
 
-# Scores single move accuracy from centipawn values
-def move_accuracy(eval_before_cp: float, eval_after_cp: float, is_white_to_move: bool) -> float:
-    try:
-        eb = float(eval_before_cp or 0.0)
-        ea = float(eval_after_cp or 0.0)
-    except Exception:
-        return 100.0
-    if is_white_to_move:
-        wp_before = eval_to_win_prob(eb) * 100.0
-        wp_after = eval_to_win_prob(ea) * 100.0
-    else:
-        wp_before = eval_to_win_prob(-eb) * 100.0
-        wp_after = eval_to_win_prob(-ea) * 100.0
-    return accuracy_from_wp_diff(wp_before, wp_after)
-
-
 # Averages per-move accuracy scores
 def game_accuracy(move_scores: list) -> float:
     vals = [float(v) for v in (move_scores or []) if isinstance(v, (int, float)) and v == v]
@@ -165,23 +149,6 @@ def grade_for(accuracy: float) -> str:
     if a >= 55:
         return "D"
     return "Needs Improvement"
-
-
-# Returns short grade label for accuracy bar
-def grade_label(accuracy: float) -> str:
-    try:
-        a = float(accuracy or 0.0)
-    except Exception:
-        a = 0.0
-    if a >= 95:
-        return "Brilliant"
-    if a >= 85:
-        return "Great"
-    if a >= 70:
-        return "Good"
-    if a >= 55:
-        return "Inaccurate"
-    return "Blundered"
 
 
 try:

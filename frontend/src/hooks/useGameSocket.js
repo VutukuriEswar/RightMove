@@ -1,8 +1,10 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useGameStore } from '../store/gameStore';
+import { useSessionStore } from '../store/sessionStore';
 import { createGameSocket } from '../lib/api';
 import { saveGameLog } from '../lib/chessUtils';
+import { getTabId, readRegistry, isFresh } from '../lib/gameSession';
 
 export function useGameSocket(gameId) {
   const token = useAuthStore((s) => s.token);
@@ -14,6 +16,26 @@ export function useGameSocket(gameId) {
 
   const connect = useCallback(() => {
     if (!gameId || gameId === 'undefined' || !token) return;
+    const sess = useSessionStore.getState();
+    if (sess.movedAway || sess.idle) return;
+    if (!sess.owned) {
+      let foreignLive = false;
+      try {
+        const entry = readRegistry();
+        const uid = useAuthStore.getState().user?.id ?? null;
+        foreignLive = !!uid && !!entry && isFresh(entry) && entry.tabId !== getTabId() && entry.userId === uid && entry.active;
+      } catch (_) {
+        foreignLive = false;
+      }
+      if (foreignLive) {
+        sess.setSuspended(true);
+        return;
+      }
+      sess.setOwned(true);
+      sess.setSuspended(false);
+    }
+    const cur = wsRef.current;
+    if (cur && (cur.readyState === WebSocket.OPEN || cur.readyState === WebSocket.CONNECTING)) return;
 
     const ws = createGameSocket(gameId, token);
     wsRef.current = ws;
@@ -134,6 +156,8 @@ export function useGameSocket(gameId) {
     };
 
     ws.onclose = (event) => {
+      const sess = useSessionStore.getState();
+      if (sess.movedAway || sess.suspended || sess.idle) return;
       const { result } = useGameStore.getState();
       if (!result && event.code < 4000) {
         reconnectTimerRef.current = setTimeout(connect, 2000);
@@ -154,6 +178,24 @@ export function useGameSocket(gameId) {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
   }, [connect]);
+
+  const sessionSuspended = useSessionStore((s) => s.suspended);
+  const sessionMovedAway = useSessionStore((s) => s.movedAway);
+
+  useEffect(() => {
+    if (!sessionSuspended && !sessionMovedAway) return;
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch (_) {}
+      wsRef.current = null;
+    }
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+  }, [sessionSuspended, sessionMovedAway]);
+
+  useEffect(() => {
+    if (sessionSuspended || sessionMovedAway || !gameId || !token) return;
+    const cur = wsRef.current;
+    if (!cur || cur.readyState === WebSocket.CLOSED) connect();
+  }, [sessionSuspended, sessionMovedAway, gameId, token, connect]);
 
   const sendReady = useCallback(() => {
     const send = () => {

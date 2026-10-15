@@ -6,6 +6,7 @@ import {
 } from 'react-router-dom';
 import { useGameStore } from '../store/gameStore';
 import { useLeaveGameStore } from '../store/leaveGameStore';
+import { useSessionStore } from '../store/sessionStore';
 
 function RouteBlocker({ active, onBlocked }) {
   const blocker = useBlocker(active);
@@ -49,9 +50,11 @@ export function useLeaveGameGuard(resignAndClose) {
   const result = useGameStore((s) => s.result);
   const openLeaveDialog = useLeaveGameStore((s) => s.openLeaveDialog);
   const closeLeaveDialog = useLeaveGameStore((s) => s.closeLeaveDialog);
+  const sessionMovedAway = useSessionStore((s) => s.movedAway);
+  const sessionOwned = useSessionStore((s) => s.owned);
 
   const onLiveGameRoute = location.pathname.startsWith('/game/');
-  const guardActive = onLiveGameRoute && !!gameId && result === null;
+  const guardActive = onLiveGameRoute && !!gameId && result === null && !sessionMovedAway && sessionOwned;
 
   const hasDataRouter = useContext(DataRouterContext) != null;
 
@@ -89,6 +92,8 @@ export function useLeaveGameGuard(resignAndClose) {
       e.returnValue = '';
     };
     const onPageHide = () => {
+      const sess = useSessionStore.getState();
+      if (sess.movedAway || !sess.owned) return;
       try {
         resignRef.current?.();
       } catch (_) {

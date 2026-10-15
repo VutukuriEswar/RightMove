@@ -2,8 +2,10 @@ import React from 'react';
 import { createBrowserRouter, RouterProvider, Navigate, useLocation, useOutlet } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { useAuth } from './hooks/useAuth';
+import { useGameSession } from './hooks/useGameSession';
 import { NavBar } from './components/shared/NavBar';
 import LeaveGameDialog from './components/game/LeaveGameDialog';
+import GameSessionDialog from './components/game/GameSessionDialog';
 import { GlobalCanvas } from './components/3d/GlobalCanvas';
 import CustomCursor from './components/shared/CustomCursor';
 import Home from './pages/Home';
@@ -68,6 +70,7 @@ const router = createBrowserRouter([
 ]);
 
 function AppShell() {
+  useGameSession();
   return (
     <>
       <GlobalCanvas />
@@ -76,6 +79,7 @@ function AppShell() {
         <NavBar />
         <AnimatedLayout />
         <LeaveGameDialog />
+        <GameSessionDialog />
       </div>
     </>
   );

@@ -3,6 +3,7 @@ import { BrowserRouter, createMemoryRouter, RouterProvider } from 'react-router-
 import { useLeaveGameGuard } from './useLeaveGameGuard';
 import { useGameStore } from '../store/gameStore';
 import { useLeaveGameStore } from '../store/leaveGameStore';
+import { useSessionStore } from '../store/sessionStore';
 
 function GuardHost({ onResign }) {
   const node = useLeaveGameGuard(onResign);
@@ -17,6 +18,7 @@ function GuardHost({ onResign }) {
 function resetStores() {
   useGameStore.setState({ gameId: null, mode: null, result: null });
   useLeaveGameStore.setState({ isOpen: false, onConfirm: null, onCancel: null });
+  useSessionStore.setState({ owned: true, suspended: false, movedAway: false, idle: false, prompt: null, tabId: 'test-tab' });
 }
 
 beforeEach(resetStores);
