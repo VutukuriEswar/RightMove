@@ -115,9 +115,8 @@ export function useGameSocket(gameId) {
           break;
 
         case 'draw_declined':
-          useGameStore.setState({ drawOfferSent: false, drawDeclinedMsg: msg.payload?.msg || 'Draw offer declined.' });
-          // Clear the decline message after 4 seconds
-          setTimeout(() => useGameStore.setState({ drawDeclinedMsg: null }), 4000);
+          useGameStore.setState({ drawOfferSent: false, drawDeclinedMsg: msg.payload?.msg || 'Draw offer declined.', drawCooling: true });
+          setTimeout(() => useGameStore.setState({ drawDeclinedMsg: null, drawCooling: false }), 10000);
           break;
 
         case 'both_ready':
@@ -195,6 +194,12 @@ export function useGameSocket(gameId) {
     }
   }, []);
 
+  const sendDrawDecline = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'draw_decline', payload: {} }));
+    }
+  }, []);
+
   const sendTimeout = useCallback((losingColor) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'timeout', payload: { color: losingColor } }));
@@ -219,5 +224,5 @@ export function useGameSocket(gameId) {
     }
   }, []);
 
-  return { sendReady, sendMove, sendResign, sendDrawOffer, acceptDraw, sendTimeout, sendTakeback, sendRedo, sendBotFirstMove };
+  return { sendReady, sendMove, sendResign, sendDrawOffer, acceptDraw, sendDrawDecline, sendTimeout, sendTakeback, sendRedo, sendBotFirstMove };
 }

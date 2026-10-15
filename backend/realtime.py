@@ -148,6 +148,17 @@ def _side_to_move(state: GameState) -> str:
     return "white" if state.board.turn == chess.WHITE else "black"
 
 
+# Resolves sender side color if determinable
+def _sender_color(state: GameState, user_id: str) -> Optional[str]:
+    if user_id == state.white_id:
+        return "white"
+    if user_id == state.black_id:
+        return "black"
+    if state.mode == "bot":
+        return state.player_color
+    return None
+
+
 # Returns authoritative clocks with deduction
 def live_clocks(state: GameState, now: Optional[float] = None) -> dict:
     clocks = dict(state.clocks)
@@ -322,15 +333,28 @@ async def handle_game_socket(
                 await _handle_bot_first_move(game_id, state, user_id, websocket)
 
             elif msg_type == "resign":
-                loser = (msg.get("payload") or {}).get("color")
-                if loser in ("white", "black"):
-                    result = "black" if loser == "white" else "white"
+                sender = _sender_color(state, user_id)
+                if state.mode != "pass_and_play" and sender is not None and sender != _side_to_move(state):
+                    await manager.send_to(websocket, {
+                        "type": "error",
+                        "payload": {"msg": "You can only resign on your turn"},
+                    })
                 else:
-                    result = "black" if state.board.turn == chess.WHITE else "white"
-                await _end_game(game_id, state, result)
+                    loser = (msg.get("payload") or {}).get("color")
+                    if loser in ("white", "black"):
+                        result = "black" if loser == "white" else "white"
+                    else:
+                        result = "black" if state.board.turn == chess.WHITE else "white"
+                    await _end_game(game_id, state, result)
 
             elif msg_type == "draw_offer":
-                if state.mode == "bot":
+                sender = _sender_color(state, user_id)
+                if state.mode != "pass_and_play" and sender is not None and sender != _side_to_move(state):
+                    await manager.send_to(websocket, {
+                        "type": "error",
+                        "payload": {"msg": "You can only offer a draw on your turn"},
+                    })
+                elif state.mode == "bot":
                     # Bot auto-decides: accept if it's losing, decline otherwise
                     import chess.engine as ce
                     try:
@@ -376,6 +400,12 @@ async def handle_game_socket(
                         "type": "draw_offer_sent",
                         "payload": {},
                     })
+
+            elif msg_type == "draw_decline":
+                await manager.broadcast_except(game_id, websocket, {
+                    "type": "draw_declined",
+                    "payload": {"msg": "Draw offer declined."},
+                })
 
             elif msg_type == "draw_accept":
                 await _end_game(game_id, state, "draw")

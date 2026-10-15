@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { friendsApi } from '../lib/api';
 import FriendCard from '../components/friends/FriendCard';
 
 function tcLabel(tc, inc) {
-  if (!tc) return 'No timer';
+  if (!tc || tc === 0) return 'No timer';
   if (tc < 60) return `${tc}s`;
   const m = Math.round(tc / 60);
   return inc ? `${m}+${inc}` : `${m} min`;
@@ -24,26 +24,36 @@ export default function Friends() {
   const [success, setSuccess] = useState(null);
   const [busyUser, setBusyUser] = useState(null);
   const [busyChallenge, setBusyChallenge] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState('all');
 
   const loadInbox = useCallback(() => {
-    friendsApi.incomingChallenges().then(d => setChallengesIn(d.challenges || [])).catch(() => {});
-    friendsApi.outgoingChallenges().then(d => setChallengesOut(d.challenges || [])).catch(() => {});
+    friendsApi
+      .incomingChallenges()
+      .then((d) => setChallengesIn(d.challenges || []))
+      .catch(() => {});
+    friendsApi
+      .outgoingChallenges()
+      .then((d) => setChallengesOut(d.challenges || []))
+      .catch(() => {});
   }, []);
 
   const loadFriends = useCallback(() => {
-    friendsApi.list()
-      .then(data => {
+    friendsApi
+      .list()
+      .then((data) => {
         const list = data.friends || [];
         setFriends(list);
         setRequests(data.pending_requests || []);
         setSent(data.sent_requests || []);
-        list.forEach(f => {
-          friendsApi.record(f.username)
-            .then(r => setRecords(prev => ({ ...prev, [f.username]: r })))
+        list.forEach((f) => {
+          friendsApi
+            .record(f.username)
+            .then((r) => setRecords((prev) => ({ ...prev, [f.username]: r })))
             .catch(() => {});
         });
       })
-      .catch(err => setError(err.message))
+      .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
     loadInbox();
   }, [loadInbox]);
@@ -51,6 +61,22 @@ export default function Friends() {
   useEffect(() => {
     loadFriends();
   }, [loadFriends]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      loadInbox();
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [loadInbox]);
+
+  useEffect(() => {
+    const accepted = challengesOut.find(
+      (c) => c.status === 'accepted' && c.game_id
+    );
+    if (accepted) {
+      navigate(`/game/${accepted.game_id}`);
+    }
+  }, [challengesOut, navigate]);
 
   const handleSendRequest = async (e) => {
     e.preventDefault();
@@ -98,11 +124,11 @@ export default function Friends() {
     }
   };
 
-  const handleChallenge = async (username, tc, isCancel) => {
+  const handleChallenge = async (username, tc, inc = 0, color = 'random', isCancel = false) => {
     setError(null);
     setSuccess(null);
     if (isCancel) {
-      const out = challengesOut.find(c => c.to_username === username);
+      const out = challengesOut.find((c) => c.to_username === username);
       if (!out) return;
       setBusyUser(username);
       try {
@@ -117,8 +143,9 @@ export default function Friends() {
     }
     setBusyUser(username);
     try {
-      await friendsApi.challenge(username, tc, 0);
-      setSuccess(`Challenge sent to ${username} (${tcLabel(tc, 0)})!`);
+      await friendsApi.challenge(username, tc, inc, color);
+      const colorStr = color === 'random' ? 'Random color' : `${color.charAt(0).toUpperCase() + color.slice(1)}`;
+      setSuccess(`Challenge sent to ${username} (${tcLabel(tc, inc)} · ${colorStr})!`);
       loadInbox();
     } catch (err) {
       setError(err.message);
@@ -157,12 +184,12 @@ export default function Friends() {
     setBusyUser(username);
     try {
       await friendsApi.remove(username);
-      setRecords(prev => {
+      setRecords((prev) => {
         const next = { ...prev };
         delete next[username];
         return next;
       });
-      setFriends(prev => prev.filter(f => f.username !== username));
+      setFriends((prev) => prev.filter((f) => f.username !== username));
       setSuccess(`${username} removed from friends.`);
     } catch (err) {
       setError(err.message);
@@ -171,71 +198,285 @@ export default function Friends() {
     }
   };
 
-  if (loading) return <div className="page"><div className="spinner-large" /></div>;
+  const outByUser = useMemo(() => {
+    const map = {};
+    challengesOut.forEach((c) => {
+      if (c.status === 'pending') {
+        map[c.to_username] = c;
+      }
+    });
+    return map;
+  }, [challengesOut]);
 
-  const outByUser = {};
-  challengesOut.forEach(c => { outByUser[c.to_username] = c; });
-  const sorted = [...friends].sort((a, b) => {
-    const on = (b.is_online ? 1 : 0) - (a.is_online ? 1 : 0);
-    if (on !== 0) return on;
-    return (records[b.username]?.matches ?? -1) - (records[a.username]?.matches ?? -1);
-  });
-  const topRival = sorted.length > 0 && (records[sorted[0].username]?.matches ?? 0) > 0
-    ? sorted[0].username
-    : null;
+  const sorted = useMemo(() => {
+    return [...friends].sort((a, b) => {
+      const on = (b.is_online ? 1 : 0) - (a.is_online ? 1 : 0);
+      if (on !== 0) return on;
+      return (records[b.username]?.matches ?? -1) - (records[a.username]?.matches ?? -1);
+    });
+  }, [friends, records]);
+
+  const topRival = useMemo(() => {
+    if (sorted.length === 0) return null;
+    const top = sorted.reduce((best, f) => {
+      const bestMatches = records[best]?.matches ?? 0;
+      const curMatches = records[f.username]?.matches ?? 0;
+      return curMatches > bestMatches ? f.username : best;
+    }, sorted[0].username);
+    return (records[top]?.matches ?? 0) > 0 ? top : null;
+  }, [sorted, records]);
+
+  const stats = useMemo(() => {
+    let totalBattles = 0;
+    let totalWins = 0;
+    let onlineCount = 0;
+    let rivalsCount = 0;
+
+    friends.forEach((f) => {
+      if (f.is_online) onlineCount++;
+      const rec = records[f.username];
+      if (rec && rec.matches > 0) {
+        rivalsCount++;
+        totalBattles += rec.matches;
+        totalWins += rec.wins;
+      }
+    });
+
+    const overallWinRate = totalBattles > 0 ? Math.round((totalWins / totalBattles) * 100) : 0;
+
+    return {
+      friendsCount: friends.length,
+      onlineCount,
+      rivalsCount,
+      totalBattles,
+      overallWinRate,
+    };
+  }, [friends, records]);
+
+  const filteredFriends = useMemo(() => {
+    return sorted.filter((f) => {
+      const matchesSearch = f.username.toLowerCase().includes(searchQuery.toLowerCase().trim());
+      if (!matchesSearch) return false;
+
+      if (activeTab === 'online') return !!f.is_online;
+      return true;
+    });
+  }, [sorted, searchQuery, activeTab]);
+
+  if (loading) {
+    return (
+      <div className="page friends-page-loading">
+        <div className="spinner-large" />
+      </div>
+    );
+  }
 
   return (
     <div className="friends-page page">
       <div className="friends-header">
+        <div className="friends-header-badge">
+          <span>Guild of Champions</span>
+        </div>
         <h1>Friends & Rivals</h1>
-        <p>Challenge them online.</p>
+        <p>Challenge friends online, track long-standing rivalries, and forge your legacy.</p>
+
+        <div className="friends-stats-bar">
+          <div className="stat-card">
+            <span className="stat-num">{stats.friendsCount}</span>
+            <span className="stat-label">Friends</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num online-text">🟢 {stats.onlineCount}</span>
+            <span className="stat-label">Online Now</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{stats.totalBattles}</span>
+            <span className="stat-label">Battles Played</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num gold-text">{stats.overallWinRate}%</span>
+            <span className="stat-label">Win Rate</span>
+          </div>
+        </div>
       </div>
 
-      {error && <div className="alert alert-error">{error}</div>}
-      {success && <div className="alert alert-success">{success}</div>}
+      {error && (
+        <div className="alert alert-error">
+          <span>{error}</span>
+          <button type="button" className="alert-close-btn" onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
+      {success && (
+        <div className="alert alert-success">
+          <span>{success}</span>
+          <button type="button" className="alert-close-btn" onClick={() => setSuccess(null)}>✕</button>
+        </div>
+      )}
+
+      {challengesIn.length > 0 && (
+        <div className="incoming-challenges-banner">
+          <div className="banner-left">
+            <span className="banner-icon">⚔️</span>
+            <div className="banner-text">
+              <strong>Match Challenge Received!</strong>
+              <span>
+                {challengesIn[0].from_username} has challenged you ({tcLabel(challengesIn[0].time_control_seconds, challengesIn[0].increment_seconds)})
+              </span>
+            </div>
+          </div>
+          <div className="banner-actions">
+            <button
+              className="btn btn-primary btn-sm interactive"
+              disabled={busyChallenge === challengesIn[0].id}
+              onClick={() => handleAcceptChallenge(challengesIn[0])}
+            >
+              Accept & Play
+            </button>
+            <button
+              className="btn btn-secondary btn-sm interactive"
+              disabled={busyChallenge === challengesIn[0].id}
+              onClick={() => handleDeclineChallenge(challengesIn[0])}
+            >
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="friends-content">
-        <div className="friends-list-section">
-          <h2>Your Friends</h2>
+        <div className="friends-main-section">
+          <div className="friends-toolbar">
+            <div className="friends-tabs">
+              <button
+                type="button"
+                className={`tab-btn ${activeTab === 'all' ? 'active' : ''}`}
+                onClick={() => setActiveTab('all')}
+              >
+                All Friends ({stats.friendsCount})
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${activeTab === 'online' ? 'active' : ''}`}
+                onClick={() => setActiveTab('online')}
+              >
+                Online ({stats.onlineCount})
+              </button>
+            </div>
+
+            <div className="friends-search-wrap">
+              <input
+                type="text"
+                placeholder="Search friends..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="friends-search-input"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="search-clear-btn"
+                  onClick={() => setSearchQuery('')}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="friends-grid">
-            {sorted.map(f => (
+            {filteredFriends.map((f) => (
               <div key={f.username} className="friend-card-wrapper">
-                 <FriendCard
-                   friend={f}
-                   isOnline={!!f.is_online}
-                   record={records[f.username]}
-                   spotlight={topRival === f.username}
-                   busy={busyUser === f.username}
-                   waiting={!!outByUser[f.username]}
-                   onChallenge={handleChallenge}
-                   onRemove={handleRemove}
-                 />
+                <FriendCard
+                  friend={f}
+                  isOnline={!!f.is_online}
+                  record={records[f.username]}
+                  spotlight={topRival === f.username}
+                  busy={busyUser === f.username}
+                  waiting={!!outByUser[f.username]}
+                  onChallenge={handleChallenge}
+                  onRemove={handleRemove}
+                />
               </div>
             ))}
-            {sorted.length === 0 && (
-              <div className="empty-state">No rivalries yet — add a friend and strike the first battle.</div>
+
+            {filteredFriends.length === 0 && (
+              <div className="friends-empty-card">
+                {friends.length === 0 ? (
+                  <>
+                    <div className="empty-heraldry">🛡️ ⚔️ 🛡️</div>
+                    <h3>No Rivals in Your Hall Yet</h3>
+                    <p>Enter a username in the invitation box to challenge your friends, or send an invitation to begin building your rivalry history.</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="empty-heraldry">🔍</div>
+                    <h3>No Friends Found</h3>
+                    <p>No companions match your current search or filter criteria.</p>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setActiveTab('all');
+                      }}
+                    >
+                      Clear Filters
+                    </button>
+                  </>
+                )}
+              </div>
             )}
           </div>
         </div>
 
         <div className="friends-sidebar">
           {(challengesIn.length > 0 || challengesOut.length > 0) && (
-            <div className="card pending-requests-card">
-              <h3>Match Challenges</h3>
+            <div className="card pending-requests-card challenges-sidebar-card">
+              <div className="sidebar-card-header">
+                <span className="sidebar-card-icon">⚔️</span>
+                <h3>Match Challenges</h3>
+              </div>
               <div className="request-list">
-                {challengesIn.map(c => (
+                {challengesIn.map((c) => (
                   <div key={c.id} className="request-item challenge-item">
-                    <span className="request-name">⚔ {c.from_username} <em>({tcLabel(c.time_control_seconds, c.increment_seconds)})</em></span>
-                    <span className="challenge-btns">
-                      <button className="btn btn-primary btn-sm" disabled={busyChallenge === c.id} onClick={() => handleAcceptChallenge(c)}>Play</button>
-                      <button className="btn btn-secondary btn-sm" disabled={busyChallenge === c.id} onClick={() => handleDeclineChallenge(c)}>Decline</button>
-                    </span>
+                    <div className="request-info">
+                      <span className="request-name">{c.from_username}</span>
+                      <span className="challenge-tc-meta">
+                        {tcLabel(c.time_control_seconds, c.increment_seconds)}
+                      </span>
+                    </div>
+                    <div className="challenge-btns">
+                      <button
+                        className="btn btn-primary btn-sm interactive"
+                        disabled={busyChallenge === c.id}
+                        onClick={() => handleAcceptChallenge(c)}
+                      >
+                        Play
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm interactive"
+                        disabled={busyChallenge === c.id}
+                        onClick={() => handleDeclineChallenge(c)}
+                      >
+                        Decline
+                      </button>
+                    </div>
                   </div>
                 ))}
-                {challengesOut.map(c => (
+                {challengesOut.map((c) => (
                   <div key={c.id} className="request-item challenge-item">
-                    <span className="request-name">⏳ {c.to_username} <em>({tcLabel(c.time_control_seconds, c.increment_seconds)})</em></span>
-                    <button className="btn btn-secondary btn-sm" onClick={() => handleChallenge(c.to_username, 0, true)}>Cancel</button>
+                    <div className="request-info">
+                      <span className="request-name">⏳ {c.to_username}</span>
+                      <span className="challenge-tc-meta">
+                        {tcLabel(c.time_control_seconds, c.increment_seconds)}
+                      </span>
+                    </div>
+                    <button
+                      className="btn btn-secondary btn-sm interactive"
+                      onClick={() => handleChallenge(c.to_username, 0, 0, 'random', true)}
+                    >
+                      Cancel
+                    </button>
                   </div>
                 ))}
               </div>
@@ -243,30 +484,56 @@ export default function Friends() {
           )}
 
           <div className="card add-friend-card">
-            <h3>Add Friend</h3>
+            <div className="sidebar-card-header">
+              <span className="sidebar-card-icon">✉️</span>
+              <h3>Add Friend</h3>
+            </div>
+            <p className="add-friend-hint">
+              Enter their exact RightMove username to dispatch an invitation.
+            </p>
             <form onSubmit={handleSendRequest}>
-              <div className="form-group">
+              <div className="form-group add-friend-form-group">
                 <input
                   type="text"
-                  placeholder="Username"
+                  placeholder="Username (e.g. Magnus)"
                   value={newFriendName}
-                  onChange={e => setNewFriendName(e.target.value)}
+                  onChange={(e) => setNewFriendName(e.target.value)}
+                  className="add-friend-input"
                 />
               </div>
-              <button type="submit" className="btn btn-primary" style={{width: '100%'}}>Send Request</button>
+              <button
+                type="submit"
+                className="btn btn-primary add-friend-btn interactive"
+                style={{ width: '100%' }}
+              >
+                Send Request
+              </button>
             </form>
           </div>
 
           {requests.length > 0 && (
             <div className="card pending-requests-card">
-              <h3>Pending Requests</h3>
+              <div className="sidebar-card-header">
+                <span className="sidebar-card-icon">📬</span>
+                <h3>Pending Requests ({requests.length})</h3>
+              </div>
               <div className="request-list">
-                {requests.map(r => (
+                {requests.map((r) => (
                   <div key={r.from_user} className="request-item">
                     <span className="request-name">{r.from_user}</span>
                     <span className="challenge-btns">
-                      <button className="btn btn-primary btn-sm" onClick={() => handleAccept(r.from_user)}>Accept</button>
-                      <button className="btn btn-secondary btn-sm" onClick={() => handleDecline(r.from_user)}>Decline</button>
+                      <button
+                        className="btn btn-primary btn-sm interactive"
+                        onClick={() => handleAccept(r.from_user)}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm interactive"
+                        onClick={() => handleDecline(r.from_user)}
+                      >
+                        Decline
+                      </button>
                     </span>
                   </div>
                 ))}
@@ -276,12 +543,20 @@ export default function Friends() {
 
           {sent.length > 0 && (
             <div className="card pending-requests-card">
-              <h3>Sent Requests</h3>
+              <div className="sidebar-card-header">
+                <span className="sidebar-card-icon">📤</span>
+                <h3>Sent Requests ({sent.length})</h3>
+              </div>
               <div className="request-list">
-                {sent.map(r => (
+                {sent.map((r) => (
                   <div key={r.username} className="request-item">
                     <span className="request-name">{r.username}</span>
-                    <button className="btn btn-secondary btn-sm" onClick={() => handleCancelSent(r.username)}>Cancel</button>
+                    <button
+                      className="btn btn-secondary btn-sm interactive"
+                      onClick={() => handleCancelSent(r.username)}
+                    >
+                      Cancel
+                    </button>
                   </div>
                 ))}
               </div>
@@ -292,3 +567,4 @@ export default function Friends() {
     </div>
   );
 }
+

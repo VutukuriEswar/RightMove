@@ -138,8 +138,8 @@ export const friendsApi = {
   cancelRequest: (username) => api.delete(`/friends/request/${encodeURIComponent(username)}`),
   record: (username) => api.get(`/friends/${encodeURIComponent(username)}/record`),
   remove: (username) => api.delete(`/friends/${encodeURIComponent(username)}`),
-  challenge: (username, tc = 600, inc = 0) =>
-    api.post('/friends/challenge', { username, time_control_seconds: tc, increment_seconds: inc }),
+  challenge: (username, tc = 600, inc = 0, color = 'random') =>
+    api.post('/friends/challenge', { username, time_control_seconds: tc, increment_seconds: inc, color_preference: color }),
   incomingChallenges: () => api.get('/friends/challenges/incoming'),
   outgoingChallenges: () => api.get('/friends/challenges/outgoing'),
   acceptChallenge: (id) => api.post(`/friends/challenges/${encodeURIComponent(id)}/accept`, {}),

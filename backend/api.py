@@ -1003,6 +1003,10 @@ async def send_challenge(body: ChallengeRequest, current_user: dict = Depends(ge
     if dup:
         raise HTTPException(status_code=409, detail="A challenge is already pending between you")
 
+    color_pref = getattr(body, "color_preference", "random") or "random"
+    if color_pref not in ("white", "black", "random"):
+        color_pref = "random"
+
     doc = {
         "from_id": user_id,
         "from_username": current_user["username"],
@@ -1010,6 +1014,7 @@ async def send_challenge(body: ChallengeRequest, current_user: dict = Depends(ge
         "to_username": body.username,
         "time_control_seconds": body.time_control_seconds,
         "increment_seconds": body.increment_seconds,
+        "color_preference": color_pref,
         "status": "pending",
         "game_id": None,
         "created_at": datetime.now(timezone.utc),
@@ -1030,8 +1035,10 @@ async def incoming_challenges(current_user: dict = Depends(get_current_user)):
         {
             "id": str(d["_id"]),
             "from_username": d.get("from_username"),
-            "time_control_seconds": d.get("time_control_seconds", 600),
+            "time_control_seconds": d.get("time_control_seconds") if d.get("time_control_seconds") is not None else 600,
             "increment_seconds": d.get("increment_seconds", 0),
+            "color_preference": d.get("color_preference", "random"),
+            "status": d.get("status", "pending"),
             "created_at": d.get("created_at"),
         }
         for d in docs
@@ -1043,15 +1050,18 @@ async def outgoing_challenges(current_user: dict = Depends(get_current_user)):
     db = get_db()
     await _sweep_challenges(db)
     cursor = db.challenges.find(
-        {"from_id": str(current_user["_id"]), "status": "pending"}
+        {"from_id": str(current_user["_id"]), "status": {"$in": ["pending", "accepted"]}}
     ).sort("created_at", -1).limit(50)
     docs = await cursor.to_list(50)
     return {"challenges": [
         {
             "id": str(d["_id"]),
             "to_username": d.get("to_username"),
-            "time_control_seconds": d.get("time_control_seconds", 600),
+            "time_control_seconds": d.get("time_control_seconds") if d.get("time_control_seconds") is not None else 600,
             "increment_seconds": d.get("increment_seconds", 0),
+            "color_preference": d.get("color_preference", "random"),
+            "status": d.get("status", "pending"),
+            "game_id": d.get("game_id"),
             "created_at": d.get("created_at"),
         }
         for d in docs
@@ -1060,6 +1070,7 @@ async def outgoing_challenges(current_user: dict = Depends(get_current_user)):
 # Accepts challenge and creates game
 @friends_router.post("/challenges/{challenge_id}/accept")
 async def accept_challenge(challenge_id: str, current_user: dict = Depends(get_current_user)):
+    import random
     from bson import ObjectId as _OID
     try:
         oid = _OID(challenge_id)
@@ -1073,9 +1084,27 @@ async def accept_challenge(challenge_id: str, current_user: dict = Depends(get_c
     if not doc or doc.get("to_id") != user_id or doc.get("status") != "pending":
         raise HTTPException(status_code=404, detail="Challenge not available")
 
+    color_pref = doc.get("color_preference", "random")
+    if color_pref == "white":
+        white_id = doc["from_id"]
+        black_id = user_id
+    elif color_pref == "black":
+        white_id = user_id
+        black_id = doc["from_id"]
+    else:
+        if random.random() < 0.5:
+            white_id = doc["from_id"]
+            black_id = user_id
+        else:
+            white_id = user_id
+            black_id = doc["from_id"]
+
+    tc_val = doc.get("time_control_seconds")
+    tc_sec = 600 if tc_val is None else tc_val
+
     game_dict = {
-        "white_id": doc["from_id"],
-        "black_id": user_id,
+        "white_id": white_id,
+        "black_id": black_id,
         "mode": "friend",
         "bot_engine": None,
         "bot_level": None,
@@ -1086,7 +1115,7 @@ async def accept_challenge(challenge_id: str, current_user: dict = Depends(get_c
         "result": "ongoing",
         "started_at": datetime.now(timezone.utc),
         "ended_at": None,
-        "time_control_seconds": doc.get("time_control_seconds", 600),
+        "time_control_seconds": tc_sec,
         "increment_seconds": doc.get("increment_seconds", 0),
     }
     res = await db.games.insert_one(game_dict)

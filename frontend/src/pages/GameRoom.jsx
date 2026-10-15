@@ -22,7 +22,7 @@ import { savePassPlaySnapshot, loadPassPlaySnapshot, clearPassPlaySnapshot } fro
 export default function GameRoom() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { sendReady, sendMove, sendResign, sendDrawOffer, acceptDraw, sendTimeout, sendTakeback, sendRedo, sendBotFirstMove } = useGameSocket(id);
+  const { sendReady, sendMove, sendResign, sendDrawOffer, acceptDraw, sendDrawDecline, sendTimeout, sendTakeback, sendRedo, sendBotFirstMove } = useGameSocket(id);
   const { style: boardStyle, setStyle } = useBoardThemeStore();
   const boardFlipped = useGameStore((s) => s.boardFlipped);
   const opponentUsername = useGameStore((s) => s.opponentUsername);
@@ -38,6 +38,7 @@ export default function GameRoom() {
     pendingDrawOffer,
     drawOfferSent,
     drawDeclinedMsg,
+    drawCooling,
     bothReady,
     waitingForOpponent,
     hasTimer,
@@ -48,6 +49,18 @@ export default function GameRoom() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [friendReqSent, setFriendReqSent] = useState(false);
+  const [isFriend, setIsFriend] = useState(false);
+
+  useEffect(() => {
+    if (!opponentUsername) return;
+    let alive = true;
+    friendsApi.list()
+      .then((d) => {
+        if (alive) setIsFriend((d.friends || []).some((f) => f.username === opponentUsername));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [opponentUsername]);
 
   const resignAndClose = useCallback(() => {
     const st = useGameStore.getState();
@@ -429,7 +442,10 @@ export default function GameRoom() {
           <button
             className="btn-neon interactive"
             style={{ flex: 1, padding: '12px 0', background: 'transparent', borderColor: 'var(--royal-crimson)', color: 'var(--royal-crimson)' }}
-            onClick={() => useGameStore.setState({ pendingDrawOffer: null })}
+            onClick={() => {
+              sendDrawDecline();
+              useGameStore.setState({ pendingDrawOffer: null });
+            }}
           >
             Decline
           </button>
@@ -533,7 +549,7 @@ export default function GameRoom() {
                   {topIsActive && <span className="turn-badge"><span className="turn-dot" />TO MOVE</span>}
                 </div>
                 <div className="player-info-right">
-                  {!isPassAndPlay && !isEngineGame && opponentUsername && (
+                  {!isPassAndPlay && !isEngineGame && opponentUsername && !isFriend && (
                     <button
                       className="btn-sm interactive"
                       style={{
@@ -694,16 +710,18 @@ export default function GameRoom() {
                   <div className="action-buttons">
                     <button
                       className="btn-neon interactive"
-                      style={{ background: 'transparent', color: 'var(--royal-crimson, #8B2500)', borderColor: 'var(--royal-crimson, #8B2500)' }}
+                      style={{ background: 'transparent', color: 'var(--royal-crimson, #8B2500)', borderColor: 'var(--royal-crimson, #8B2500)', opacity: !isPlayerTurn ? 0.45 : 1 }}
+                      disabled={!isPlayerTurn}
+                      title={!isPlayerTurn ? 'You can only resign on your turn' : 'Resign the game'}
                       onClick={resignAndClose}
                     >Resign</button>
                     <div style={{ position: 'relative' }}>
                       <button
                         className="btn-neon interactive"
-                        style={{ background: 'transparent', color: 'var(--royal-brass, #A67C52)', borderColor: 'var(--royal-brass, #A67C52)', opacity: drawOfferSent ? 0.6 : 1 }}
-                        onClick={drawOfferSent ? undefined : sendDrawOffer}
-                        disabled={drawOfferSent}
-                        title={drawOfferSent ? 'Waiting for opponent to accept…' : 'Offer a draw'}
+                        style={{ background: 'transparent', color: 'var(--royal-brass, #A67C52)', borderColor: 'var(--royal-brass, #A67C52)', opacity: (drawOfferSent || drawCooling) ? 0.6 : (!isPlayerTurn ? 0.45 : 1) }}
+                        onClick={(drawOfferSent || drawCooling) ? undefined : sendDrawOffer}
+                        disabled={drawOfferSent || drawCooling || !isPlayerTurn}
+                        title={drawOfferSent ? 'Waiting for opponent to accept…' : drawCooling ? 'Offer a draw again in a few seconds' : !isPlayerTurn ? 'You can only offer a draw on your turn' : 'Offer a draw'}
                       >{drawOfferSent ? '🤝 Waiting…' : 'Offer Draw'}</button>
                       {drawDeclinedMsg && (
                         <div style={{
