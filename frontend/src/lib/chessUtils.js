@@ -1,14 +1,14 @@
 import { Chess } from 'chess.js';
 
 export const CLASSIFICATION_META = {
-  brilliant:  { label: 'Brilliant',  emoji: '!!', color: 'var(--color-brilliant)' },
-  best:       { label: 'Best',       emoji: '!',  color: 'var(--color-best)' },
-  best_move:  { label: 'Best',       emoji: '!',  color: 'var(--color-best)' },
-  excellent:  { label: 'Excellent',  emoji: '!',  color: 'var(--color-excellent)' },
-  good:       { label: 'Good',       emoji: '',   color: 'var(--color-good)' },
+  brilliant: { label: 'Brilliant', emoji: '!!', color: 'var(--color-brilliant)' },
+  best: { label: 'Best', emoji: '!', color: 'var(--color-best)' },
+  best_move: { label: 'Best', emoji: '!', color: 'var(--color-best)' },
+  excellent: { label: 'Excellent', emoji: '!', color: 'var(--color-excellent)' },
+  good: { label: 'Good', emoji: '', color: 'var(--color-good)' },
   inaccuracy: { label: 'Inaccuracy', emoji: '?!', color: 'var(--color-inaccuracy)' },
-  mistake:    { label: 'Mistake',    emoji: '?',  color: 'var(--color-mistake)' },
-  blunder:    { label: 'Blunder',    emoji: '??', color: 'var(--color-blunder)' },
+  mistake: { label: 'Mistake', emoji: '?', color: 'var(--color-mistake)' },
+  blunder: { label: 'Blunder', emoji: '??', color: 'var(--color-blunder)' },
 };
 
 export function normalizeClassification(c) {
@@ -87,10 +87,10 @@ export function moveRecordToSquares(move) {
 export function formatClock(ms) {
   if (ms <= 0) return '0:00.00';
   const totalCs = Math.floor(ms / 10);
-  const cs      = totalCs % 100;
-  const totalS  = Math.floor(totalCs / 100);
-  const secs    = totalS % 60;
-  const mins    = Math.floor(totalS / 60);
+  const cs = totalCs % 100;
+  const totalS = Math.floor(totalCs / 100);
+  const secs = totalS % 60;
+  const mins = Math.floor(totalS / 60);
   return `${mins}:${secs.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`;
 }
 
@@ -141,8 +141,8 @@ export async function saveGameLog(gameId, moves, meta = {}) {
       moves,
       saved_at: Date.now(),
       opponent: meta.opponent || 'Unknown',
-      result:   meta.result   || null,
-      mode:     meta.mode     || null,
+      result: meta.result || null,
+      mode: meta.mode || null,
       player_color: meta.player_color || meta.playerColor || null,
     });
     tx.oncomplete = resolve;
@@ -202,7 +202,7 @@ export function encodeSharePayload(obj) {
 
 export function decodeSharePayload(fragment) {
   let s = String(fragment || '');
-  try { s = decodeURIComponent(s); } catch (_) {}
+  try { s = decodeURIComponent(s); } catch (_) { }
   s = s.replace(/-/g, '+').replace(/_/g, '/');
   while (s.length % 4 !== 0) s += '=';
   return JSON.parse(_utf8Decode(atob(s)));
@@ -225,6 +225,24 @@ export function slimGameForShare(game) {
 export function buildShareUrl(game) {
   const payload = encodeSharePayload(slimGameForShare(game));
   return `${window.location.origin}/shared/${game.game_id}#${payload}`;
+}
+
+export function parsePgn(pgnText) {
+  try {
+    const chess = new Chess();
+    const loaded = chess.loadPgn(pgnText.trim());
+    if (!loaded) {
+      return { uciMoves: null, finalFen: null, error: 'Invalid PGN format' };
+    }
+    const history = chess.history({ verbose: true });
+    const uciMoves = history.map((m) => {
+      const promo = m.promotion ? m.promotion.toLowerCase() : '';
+      return `${m.from}${m.to}${promo}`;
+    });
+    return { uciMoves, finalFen: chess.fen(), error: null };
+  } catch (e) {
+    return { uciMoves: null, finalFen: null, error: e.message || 'PGN parse error' };
+  }
 }
 
 export async function copyTextToClipboard(text) {

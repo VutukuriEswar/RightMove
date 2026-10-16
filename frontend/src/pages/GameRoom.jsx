@@ -58,7 +58,7 @@ export default function GameRoom() {
       .then((d) => {
         if (alive) setIsFriend((d.friends || []).some((f) => f.username === opponentUsername));
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => { alive = false; };
   }, [opponentUsername]);
 
@@ -104,6 +104,9 @@ export default function GameRoom() {
       useLeaveGameStore.getState().setLeaving(false);
     };
   }, [resignForLeave]);
+
+  const pgnImportMovesRef = useRef(null);
+  const [replayingPgn, setReplayingPgn] = useState(false);
 
   const [showReadyModal, setShowReadyModal] = useState(false);
   const [playersReady, setPlayersReady] = useState(false);
@@ -178,8 +181,30 @@ export default function GameRoom() {
     }
   }, [bothReady, playersReady]);
 
+  const pgnReplayStartedRef = useRef(false);
   useEffect(() => {
-    if (gameMode !== 'pass_and_play' || !playersReady || result !== null) return;
+    if (!playersReady || pgnReplayStartedRef.current) return;
+    const moves = pgnImportMovesRef.current;
+    if (!moves || moves.length === 0) return;
+    pgnReplayStartedRef.current = true;
+    pgnImportMovesRef.current = null;
+    setReplayingPgn(true);
+    let i = 0;
+    const sendNext = () => {
+      if (i >= moves.length) {
+        setReplayingPgn(false);
+        return;
+      }
+      sendMove(moves[i]);
+      i++;
+      setTimeout(sendNext, 80);
+    };
+    setTimeout(sendNext, 600);
+  }, [playersReady, sendMove]);
+
+
+  useEffect(() => {
+    if (gameMode !== 'pass_and_play' || !playersReady || result !== null || replayingPgn) return;
     const cur = fen.split(' ')[1] === 'w' ? 'white' : 'black';
     if (prevActiveColorRef.current !== null && prevActiveColorRef.current !== cur) {
       if (boardStyle !== '2d') {
@@ -257,12 +282,29 @@ export default function GameRoom() {
           sendReady();
         } else if (game.mode === 'pass_and_play') {
 
-          const snap = loadPassPlaySnapshot(id);
-          const restoredMoves = useGameStore.getState().moves.length;
-          if (snap && snap.moveCount > 0 && restoredMoves > 0) {
-            setShowResumeModal(true);
+          let pgnKey = `pgn-import-${id}`;
+          let pgnMovesRaw = null;
+          try { pgnMovesRaw = sessionStorage.getItem(pgnKey); } catch (_) { }
+          if (pgnMovesRaw) {
+            try {
+              const pgnMoves = JSON.parse(pgnMovesRaw);
+              pgnImportMovesRef.current = pgnMoves;
+              try { sessionStorage.removeItem(pgnKey); } catch (_) { }
+            } catch (_) { }
+          }
+
+          if (pgnImportMovesRef.current) {
+            setPlayersReady(true);
+            setShowReadyModal(false);
+            sendReady();
           } else {
-            setShowReadyModal(true);
+            const snap = loadPassPlaySnapshot(id);
+            const restoredMoves = useGameStore.getState().moves.length;
+            if (snap && snap.moveCount > 0 && restoredMoves > 0) {
+              setShowResumeModal(true);
+            } else {
+              setShowReadyModal(true);
+            }
           }
         } else {
 
@@ -308,10 +350,33 @@ export default function GameRoom() {
     sendMove(uci);
   };
 
+  const replayPgnMovesIfNeeded = useCallback(() => {
+    const moves = pgnImportMovesRef.current;
+    if (!moves || moves.length === 0) return;
+    pgnImportMovesRef.current = null;
+    setReplayingPgn(true);
+    let i = 0;
+    const sendNext = () => {
+      if (i >= moves.length) {
+        setReplayingPgn(false);
+        return;
+      }
+      sendMove(moves[i]);
+      i++;
+      setTimeout(sendNext, 80);
+    };
+    setTimeout(sendNext, 500);
+  }, [sendMove]);
+
   const handleReady = () => {
     if (isPassAndPlay) {
       setPlayersReady(true);
       setShowReadyModal(false);
+      if (pgnImportMovesRef.current) {
+        sendReady();
+        replayPgnMovesIfNeeded();
+        return;
+      }
     } else {
       useGameStore.setState({ waitingForOpponent: true });
     }
@@ -386,7 +451,22 @@ export default function GameRoom() {
     ? (topColor === 'white' ? 'White' : 'Black')
     : (opponentUsername || 'Opponent');
 
-  const boardDisabled = !gameActive || !isPlayerTurn || !playersReady || isFlipping;
+  const boardDisabled = !gameActive || !isPlayerTurn || !playersReady || isFlipping || replayingPgn;
+
+  const pgnReplayPortal = replayingPgn && createPortal(
+    <div className="ready-modal-overlay" style={{ background: 'rgba(6,3,1,0.88)' }}>
+      <div className="ready-modal">
+        <div className="ready-modal-crest" style={{ fontSize: '2.8rem' }}>📂</div>
+        <h2 style={{ fontSize: '1.3rem' }}>Replaying Game…</h2>
+        <p style={{ textAlign: 'center' }}>Replaying PGN moves to restore the position.<br />Please wait a moment.</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', marginTop: '8px' }}>
+          <span className="spinner" />
+          <span style={{ fontSize: '0.85rem', opacity: 0.8 }}>Move {moves.length}…</span>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
 
   const readyModalPortal = showReadyModal && createPortal(
     <div className="ready-modal-overlay">
@@ -547,6 +627,7 @@ export default function GameRoom() {
 
       {leaveGameBlocker}
 
+      {pgnReplayPortal}
       {readyModalPortal}
       {resumeModalPortal}
       {drawModalPortal}

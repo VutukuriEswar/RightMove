@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../hooks/useAuth';
 import { gamesApi, createMatchmakingSocket } from '../lib/api';
+import { parsePgn } from '../lib/chessUtils';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -22,13 +23,13 @@ const itemVariants = {
 };
 
 const TIME_PRESETS = [
-  { label: 'No Timer', tc: 0,    inc: 0 },
-  { label: '1 min',   tc: 60,   inc: 0 },
-  { label: '5 min',   tc: 300,  inc: 0 },
-  { label: '10 min',  tc: 600,  inc: 0 },
-  { label: '30 min',  tc: 1800, inc: 0 },
-  { label: '1 hr',    tc: 3600, inc: 0 },
-  { label: 'Custom',  tc: null, inc: 0 },
+  { label: 'No Timer', tc: 0, inc: 0 },
+  { label: '1 min', tc: 60, inc: 0 },
+  { label: '5 min', tc: 300, inc: 0 },
+  { label: '10 min', tc: 600, inc: 0 },
+  { label: '30 min', tc: 1800, inc: 0 },
+  { label: '1 hr', tc: 3600, inc: 0 },
+  { label: 'Custom', tc: null, inc: 0 },
 ];
 
 export default function Lobby() {
@@ -93,6 +94,26 @@ export default function Lobby() {
       setError('Matchmaking connection failed');
       setSearching(false);
     };
+  };
+
+  const handlePgnImport = async (uciMoves) => {
+    setPendingGameType(null);
+    setLoading(true);
+    setError(null);
+    try {
+      const { id } = await gamesApi.create({
+        mode: 'pass_and_play',
+        time_control_seconds: 0,
+        increment_seconds: 0,
+      });
+      try {
+        sessionStorage.setItem(`pgn-import-${id}`, JSON.stringify(uciMoves));
+      } catch (_) { }
+      navigate(`/game/${id}`);
+    } catch (err) {
+      setError(err.message || 'Failed to start game');
+      setLoading(false);
+    }
   };
 
   const handleStartPlayGame = async () => {
@@ -193,7 +214,7 @@ export default function Lobby() {
 
         <motion.div variants={itemVariants} className="lobby-card glass-panel interactive" whileHover={{ scale: 1.03, translateY: -6 }}>
           <div className="lobby-card-icon">🎮</div>
-          <h2>Pass & Play</h2>
+          <h2>Pass &amp; Play</h2>
           <p>Two players sharing one board, as chess has always been played. No network required.</p>
           <button
             className="btn-neon interactive"
@@ -210,7 +231,9 @@ export default function Lobby() {
           <TimeControlModal
             title={pendingGameType === 'pass_and_play' ? 'Choose Your Time' : 'Choose Your Match Pace'}
             subtitle="Both players receive the same time. Pick a tempo, or play without a clock."
+            isPassAndPlay={pendingGameType === 'pass_and_play'}
             onSelect={selectTimeControl}
+            onPgnImport={handlePgnImport}
             onClose={() => setPendingGameType(null)}
           />
         )}
@@ -219,9 +242,12 @@ export default function Lobby() {
   );
 }
 
-function TimeControlModal({ title, subtitle, onSelect, onClose }) {
+function TimeControlModal({ title, subtitle, isPassAndPlay, onSelect, onPgnImport, onClose }) {
   const [customMinutes, setCustomMinutes] = useState('');
   const [showCustom, setShowCustom] = useState(false);
+  const [pgnError, setPgnError] = useState(null);
+  const [pgnParsing, setPgnParsing] = useState(false);
+  const fileInputRef = useRef(null);
 
   const handlePreset = (p) => {
     if (p.tc === null) {
@@ -235,6 +261,36 @@ function TimeControlModal({ title, subtitle, onSelect, onClose }) {
     const mins = parseFloat(customMinutes);
     if (!mins || mins <= 0) return;
     onSelect({ label: `${customMinutes} min`, tc: Math.round(mins * 60), inc: 0 });
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPgnError(null);
+    setPgnParsing(true);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target.result;
+      const { uciMoves, error } = parsePgn(text);
+      if (error || !uciMoves) {
+        setPgnError(error || 'Could not parse PGN');
+        setPgnParsing(false);
+        return;
+      }
+      if (uciMoves.length === 0) {
+        setPgnError('PGN has no moves to replay');
+        setPgnParsing(false);
+        return;
+      }
+      setPgnParsing(false);
+      onPgnImport(uciMoves);
+    };
+    reader.onerror = () => {
+      setPgnError('Failed to read file');
+      setPgnParsing(false);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   return (
@@ -289,6 +345,40 @@ function TimeControlModal({ title, subtitle, onSelect, onClose }) {
             >
               ✓ Set
             </button>
+          </div>
+        )}
+
+        {isPassAndPlay && (
+          <div className="tc-pgn-section">
+            <div className="tc-pgn-divider">
+              <span>or</span>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pgn,text/plain"
+              style={{ display: 'none' }}
+              onChange={handleFileChange}
+              id="pgn-file-input"
+            />
+            <button
+              className="btn-neon interactive tc-pgn-btn"
+              onClick={() => { setPgnError(null); fileInputRef.current?.click(); }}
+              disabled={pgnParsing}
+              title="Import a PGN file and continue the game from where it left off"
+            >
+              {pgnParsing ? (
+                <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />&nbsp;Parsing…</>
+              ) : (
+                <>📂 Import PGN &amp; Continue</>
+              )}
+            </button>
+            {pgnError && (
+              <p className="tc-pgn-error">{pgnError}</p>
+            )}
+            <p className="tc-pgn-note">
+              Upload a saved PGN file. The game will resume from the final position — no clock.
+            </p>
           </div>
         )}
 
