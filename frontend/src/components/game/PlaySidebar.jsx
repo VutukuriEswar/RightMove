@@ -143,20 +143,24 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
             </div>
             {botEngine === 'maia3' ? (
               <label className="play-setup-slider">
-                Difficulty — Maia rating: <strong>{maiaElo ?? 1500}</strong>
+                <span>Difficulty — Maia rating</span>
+                <strong>{maiaElo ?? 1500}</strong>
                 <input
                   type="range" min="1100" max="2000" step="50"
                   value={maiaElo ?? 1500}
+                  style={{ '--fill-pct': `${(((maiaElo ?? 1500) - 1100) / 900) * 100}%` }}
                   onChange={(e) => handleDifficulty(Number(e.target.value))}
                   disabled={cfgBusy}
                 />
               </label>
             ) : (
               <label className="play-setup-slider">
-                Difficulty — depth: <strong>{botDepth ?? 10}</strong>
+                <span>Difficulty — Stockfish depth</span>
+                <strong>{botDepth ?? 10}</strong>
                 <input
                   type="range" min="1" max="20"
                   value={botDepth ?? 10}
+                  style={{ '--fill-pct': `${(((botDepth ?? 10) - 1) / 19) * 100}%` }}
                   onChange={(e) => handleDifficulty(Number(e.target.value))}
                   disabled={cfgBusy}
                 />

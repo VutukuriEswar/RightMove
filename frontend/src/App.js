@@ -12,6 +12,7 @@ import Home from './pages/Home';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Lobby from './pages/Lobby';
+import PausedGames from './pages/PausedGames';
 import GameRoom from './pages/GameRoom';
 import Review from './pages/Review';
 
@@ -56,6 +57,7 @@ const router = createBrowserRouter([
       { path: '/login', element: <Login /> },
       { path: '/signup', element: <Signup /> },
       { path: '/lobby', element: <RequireAuth><Lobby /></RequireAuth> },
+      { path: '/paused', element: <RequireAuth><PausedGames /></RequireAuth> },
       { path: '/game/:id', element: <RequireAuth><GameRoom /></RequireAuth> },
       { path: '/review/:id', element: <RequireAuth><Review /></RequireAuth> },
       { path: '/friends', element: <RequireAuth><Friends /></RequireAuth> },

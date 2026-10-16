@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { friendsApi } from '../lib/api';
 import FriendCard from '../components/friends/FriendCard';
 
@@ -26,6 +26,7 @@ export default function Friends() {
   const [busyChallenge, setBusyChallenge] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('all');
+  const sentChallengeIds = useRef(new Set());
 
   const loadInbox = useCallback(() => {
     friendsApi
@@ -70,11 +71,12 @@ export default function Friends() {
   }, [loadInbox]);
 
   useEffect(() => {
-    const accepted = challengesOut.find(
-      (c) => c.status === 'accepted' && c.game_id
+    const hit = challengesOut.find(
+      (c) => c.status === 'accepted' && c.game_id && sentChallengeIds.current.has(c.id)
     );
-    if (accepted) {
-      navigate(`/game/${accepted.game_id}`);
+    if (hit) {
+      sentChallengeIds.current.delete(hit.id);
+      navigate(`/game/${hit.game_id}`);
     }
   }, [challengesOut, navigate]);
 
@@ -143,7 +145,8 @@ export default function Friends() {
     }
     setBusyUser(username);
     try {
-      await friendsApi.challenge(username, tc, inc, color);
+      const res = await friendsApi.challenge(username, tc, inc, color);
+      if (res?.challenge_id) sentChallengeIds.current.add(res.challenge_id);
       const colorStr = color === 'random' ? 'Random color' : `${color.charAt(0).toUpperCase() + color.slice(1)}`;
       setSuccess(`Challenge sent to ${username} (${tcLabel(tc, inc)} · ${colorStr})!`);
       loadInbox();
@@ -463,7 +466,7 @@ export default function Friends() {
                     </div>
                   </div>
                 ))}
-                {challengesOut.map((c) => (
+                {challengesOut.filter((c) => c.status !== 'accepted').map((c) => (
                   <div key={c.id} className="request-item challenge-item">
                     <div className="request-info">
                       <span className="request-name">⏳ {c.to_username}</span>
@@ -477,6 +480,22 @@ export default function Friends() {
                     >
                       Cancel
                     </button>
+                  </div>
+                ))}
+                {challengesOut.filter((c) => c.status === 'accepted' && c.game_id).map((c) => (
+                  <div key={c.id} className="request-item challenge-item">
+                    <div className="request-info">
+                      <span className="request-name">✓ {c.to_username} accepted</span>
+                      <span className="challenge-tc-meta">
+                        {tcLabel(c.time_control_seconds, c.increment_seconds)}
+                      </span>
+                    </div>
+                    <Link
+                      className="btn btn-secondary btn-sm interactive"
+                      to={`/game/${c.game_id}`}
+                    >
+                      View
+                    </Link>
                   </div>
                 ))}
               </div>

@@ -62,6 +62,13 @@ export function useLeaveGameGuard(resignAndClose) {
   resignRef.current = resignAndClose;
 
   const handleBlocked = useCallback((blocker) => {
+    try {
+      if (useLeaveGameStore.getState().consumeBypass()) {
+        blocker.proceed();
+        return;
+      }
+    } catch (_) {
+    }
     openLeaveDialog({
       onConfirm: () => {
         try {

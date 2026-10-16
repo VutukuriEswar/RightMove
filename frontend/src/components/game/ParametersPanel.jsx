@@ -50,45 +50,49 @@ export default function ParametersPanel({ fen, playerColor = 'white', onProbs })
         <span>📊 Parameters {busy ? '…' : ''}</span>
         <span className="params-chevron">{open ? '▾' : '▸'}</span>
       </button>
-      {meta && (
+      {meta && Number.isFinite(meta.net) && (
         <p className="coach-text">
-          <strong>{(meta.net / 100).toFixed(2)}</strong>
-          {meta.phase ? ` · ${meta.phase}` : ''}
+          Eval <strong>{(meta.net / 100).toFixed(2)}</strong>
         </p>
       )}
       {open && (
         <>
           {!params && <p className="coach-text">Analyzing position…</p>}
           {params && (
-            <div className="params-table-wrap">
-              <table className="params-table">
-                <thead>
-                  <tr>
-                    <th>Parameter</th>
-                    <th>You</th>
-                    <th>Bot</th>
-                    <th>+/−</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ORDER.filter((k) => params[k]).map((k) => {
-                    const p = params[k];
-                    const you = youAreWhite ? p.white : p.black;
-                    const bot = youAreWhite ? p.black : p.white;
-                    const diffYou = youAreWhite ? p.diff : -p.diff;
-                    return (
-                      <tr key={k} className="param-row">
-                        <td className="param-name" title={p.description}>{p.name}</td>
-                        <td className="param-val">{Math.round(you)}</td>
-                        <td className="param-val">{Math.round(bot)}</td>
-                        <td className={`param-diff ${diffYou > 0 ? 'pw' : diffYou < 0 ? 'pb' : ''}`}>
-                          {fmtDiff(diffYou)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="param-rows">
+              {ORDER.filter((k) => params[k]).map((k) => {
+                const p = params[k];
+                const you = youAreWhite ? p.white : p.black;
+                const bot = youAreWhite ? p.black : p.white;
+                const diffYou = youAreWhite ? p.diff : -p.diff;
+                const peak = Math.max(Math.abs(you), Math.abs(bot), 1);
+                return (
+                  <div key={k} className="param-row2" title={p.description}>
+                    <div className="param-row2-head">
+                      <span className="param-row2-name">{p.name}</span>
+                      <span className={`param-diff-pill ${diffYou > 0 ? 'pw' : diffYou < 0 ? 'pb' : ''}`}>
+                        {fmtDiff(diffYou)}
+                      </span>
+                    </div>
+                    <div className="param-bars">
+                      <div className="param-bar-row">
+                        <span>You</span>
+                        <div className="param-bar">
+                          <div className="param-fill-you" style={{ width: `${(Math.abs(you) / peak) * 100}%` }} />
+                        </div>
+                        <em>{Math.round(you)}</em>
+                      </div>
+                      <div className="param-bar-row">
+                        <span>Bot</span>
+                        <div className="param-bar">
+                          <div className="param-fill-bot" style={{ width: `${(Math.abs(bot) / peak) * 100}%` }} />
+                        </div>
+                        <em>{Math.round(bot)}</em>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </>

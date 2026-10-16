@@ -12,7 +12,7 @@ function gridToWorld(board, square) {
   const file = square[0];
   const rank = +square[1];
   let ix, iz;
-  
+
   if (board.invertX) {
     ix = 7 - FILES.indexOf(file);
   } else {
@@ -36,13 +36,13 @@ function worldToSquare(board, localX, localZ) {
   const iz = Math.floor((localZ - board.minZ) / board.cellZ);
   if (ix < 0 || ix > 7 || iz < 0 || iz > 7) return null;
   let file, rank;
-  
+
   if (board.invertX) {
     file = FILES[7 - ix];
   } else {
     file = FILES[ix];
   }
-  
+
   if (board.whiteAtZ0) {
     rank = iz + 1;
   } else {
@@ -196,6 +196,81 @@ function AutoFit({ controlsRef, target, fitKey, cancelledRef }) {
   return null;
 }
 
+const RETURN_IDLE_MS = 2000;
+const HOME_TARGET = new THREE.Vector3(0, 0, 0);
+
+function AutoReturn({ controlsRef, homeY, homeDist }) {
+  const gl = useThree((s) => s.gl);
+  const idleAtRef = useRef(0);
+  const activeRef = useRef(false);
+  useEffect(() => {
+    const c = controlsRef.current;
+    const el = gl?.domElement;
+    const arm = () => {
+      idleAtRef.current = Date.now() + RETURN_IDLE_MS;
+      activeRef.current = true;
+    };
+    const cancel = () => {
+      activeRef.current = false;
+      idleAtRef.current = 0;
+    };
+    const onStart = () => {
+      cancel();
+    };
+    const onEnd = () => {
+      arm();
+    };
+    const onPointerDown = () => {
+      cancel();
+    };
+    const onPointerUp = () => {
+      arm();
+    };
+    if (c) {
+      c.addEventListener('start', onStart);
+      c.addEventListener('end', onEnd);
+    }
+    if (el) {
+      el.addEventListener('pointerdown', onPointerDown);
+      el.addEventListener('pointerup', onPointerUp);
+      el.addEventListener('pointercancel', onPointerUp);
+    }
+    return () => {
+      if (c) {
+        c.removeEventListener('start', onStart);
+        c.removeEventListener('end', onEnd);
+      }
+      if (el) {
+        el.removeEventListener('pointerdown', onPointerDown);
+        el.removeEventListener('pointerup', onPointerUp);
+        el.removeEventListener('pointercancel', onPointerUp);
+      }
+    };
+  }, [controlsRef, gl]);
+  useFrame(() => {
+    if (!activeRef.current) return;
+    if (Date.now() < idleAtRef.current) return;
+    const c = controlsRef.current;
+    if (!c) {
+      activeRef.current = false;
+      return;
+    }
+    const cam = c.object;
+    cam.position.x = THREE.MathUtils.lerp(cam.position.x, 0, 0.08);
+    cam.position.y = THREE.MathUtils.lerp(cam.position.y, homeY, 0.08);
+    cam.position.z = THREE.MathUtils.lerp(cam.position.z, homeDist, 0.08);
+    c.target.lerp(HOME_TARGET, 0.12);
+    cam.updateProjectionMatrix();
+    if (
+      Math.abs(cam.position.x) + Math.abs(cam.position.y - homeY) + Math.abs(cam.position.z - homeDist) < 0.05 &&
+      c.target.length() < 0.05
+    ) {
+      activeRef.current = false;
+    }
+  });
+  return null;
+}
+
 const P_MODES = {
   q: { w: '♛', b: '♕' },
   r: { w: '♜', b: '♖' },
@@ -294,7 +369,7 @@ export default function Board3D({
 
   const { checkSquare, activePieces } = useMemo(() => {
     const c = chessRef.current;
-    try { c.load(fen); } catch (_) {}
+    try { c.load(fen); } catch (_) { }
     const bb = c.board();
     const pieces = [];
     bb.forEach((row, r) => row.forEach((pc, col) => {
@@ -605,6 +680,13 @@ export default function Board3D({
               target={zoom != null ? zoom : defaultZoom}
               fitKey={fitKey}
               cancelledRef={userZoomedRef}
+            />
+          )}
+          {!thumbnail && (
+            <AutoReturn
+              controlsRef={controlsRef}
+              homeY={cameraY}
+              homeDist={zoom != null ? zoom : defaultZoom}
             />
           )}
           {!thumbnail && <DragBridge host={dragHost} />}

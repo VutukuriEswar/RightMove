@@ -110,20 +110,45 @@ export default function GameRoom() {
   const [showGameOver, setShowGameOver] = useState(false);
   const [passPlayResignColor, setPassPlayResignColor] = useState(null);
   const [rematching, setRematching] = useState(false);
+  const [pausing, setPausing] = useState(false);
+
+  const handlePause = useCallback(async () => {
+    if (pausing) return;
+    setPausing(true);
+    try {
+      await gamesApi.pauseGame(id);
+      try {
+        useLeaveGameStore.getState().allowLeaveOnce();
+      } catch (_) {
+      }
+      navigate('/paused');
+    } catch (err) {
+      useGameStore.setState({ serverError: err.message || 'Pause failed' });
+      setPausing(false);
+    }
+  }, [pausing, id, navigate]);
+  const [rematchError, setRematchError] = useState(null);
 
   const handleRematch = useCallback(async () => {
     const opp = useGameStore.getState().opponentUsername;
-    if (!opp || rematching) return;
-    setRematching(true);
+    let me = null;
     try {
-      const { id: newId } = await gamesApi.create({
-        mode: 'friend',
-        friend_username: opp,
-        time_control_seconds: timeControlRef.current.tc,
-        increment_seconds: timeControlRef.current.inc,
-      });
-      navigate(`/game/${newId}`);
+      me = useAuthStore.getState().user?.username ?? null;
     } catch (_) {
+      me = null;
+    }
+    if (!opp || (me && opp === me) || rematching) return;
+    setRematching(true);
+    setRematchError(null);
+    try {
+      await friendsApi.challenge(
+        opp,
+        timeControlRef.current.tc,
+        timeControlRef.current.inc
+      );
+      navigate('/friends');
+    } catch (err) {
+      setRematchError(err.message || 'Rematch challenge failed');
       setRematching(false);
     }
   }, [navigate, rematching]);
@@ -157,14 +182,18 @@ export default function GameRoom() {
     if (gameMode !== 'pass_and_play' || !playersReady || result !== null) return;
     const cur = fen.split(' ')[1] === 'w' ? 'white' : 'black';
     if (prevActiveColorRef.current !== null && prevActiveColorRef.current !== cur) {
-
-      if (flipTimerRef.current) clearTimeout(flipTimerRef.current);
-      setIsFlipping(true);
-      flipTimerRef.current = setTimeout(() => setIsFlipping(false), FLIP_DURATION);
+      if (boardStyle !== '2d') {
+        if (flipTimerRef.current) clearTimeout(flipTimerRef.current);
+        setIsFlipping(false);
+      } else {
+        if (flipTimerRef.current) clearTimeout(flipTimerRef.current);
+        setIsFlipping(true);
+        flipTimerRef.current = setTimeout(() => setIsFlipping(false), FLIP_DURATION);
+      }
     }
     prevActiveColorRef.current = cur;
 
-  }, [fen, gameMode, playersReady, result]);
+  }, [fen, gameMode, playersReady, result, boardStyle]);
 
   useEffect(() => () => { if (flipTimerRef.current) clearTimeout(flipTimerRef.current); }, []);
 
@@ -499,9 +528,13 @@ export default function GameRoom() {
               style={{ flex: 1, padding: '12px 0' }}
               disabled={rematching}
               onClick={handleRematch}
+              title="Send a rematch challenge"
             >
-              {rematching ? '...' : '⚔ Rematch'}
+              {rematching ? 'Sending...' : '⚔ Rematch'}
             </button>
+          )}
+          {rematchError && (
+            <p className="review-report-text" style={{ width: '100%', textAlign: 'center' }}>{rematchError}</p>
           )}
         </div>
       </div>
@@ -539,7 +572,7 @@ export default function GameRoom() {
 
           <div className="game-board-area">
             <div
-              className={`board-column${isPassAndPlay && isFlipping ? ' board-flip-anim' : ''}`}
+              className={`board-column${isPassAndPlay && isFlipping && boardStyle === '2d' ? ' board-flip-anim' : ''}`}
             >
 
               <div className={`player-info top${theirClockActive ? ' active-turn' : ''}`}>
@@ -732,6 +765,15 @@ export default function GameRoom() {
                         }}>{drawDeclinedMsg}</div>
                       )}
                     </div>
+                    {isEngineGame && (
+                      <button
+                        className="btn-neon interactive"
+                        style={{ width: '100%', marginTop: '8px', background: 'transparent', color: 'var(--royal-gold, #D4AF37)', borderColor: 'var(--royal-gold, #D4AF37)' }}
+                        disabled={pausing}
+                        title="Pause and continue later"
+                        onClick={handlePause}
+                      >{pausing ? 'Pausing...' : '⏸ Pause'}</button>
+                    )}
                   </div>
                 )
               ) : (

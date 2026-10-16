@@ -64,6 +64,10 @@ export const gamesApi = {
   getSummary: (gameId) => api.get(`/games/${gameId}/summary`),
   getMoves: (gameId) => api.get(`/games/${gameId}/moves`),
   history: (limit = 50, skip = 0) => api.get(`/games/mine/history?limit=${limit}&skip=${skip}`),
+  pausedGames: () => api.get('/games/mine/paused'),
+  pauseGame: (gameId) => api.post(`/games/${gameId}/pause`, {}),
+  resumeGame: (gameId) => api.post(`/games/${gameId}/resume`, {}),
+  resignPaused: (gameId) => api.post(`/games/${gameId}/resign-paused`, {}),
   chooseColor: (gameId, player_color) =>
     api.post(`/games/${gameId}/choose-color`, { player_color }),
   updateBotConfig: (gameId, cfg) =>

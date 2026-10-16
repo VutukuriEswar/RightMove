@@ -16,4 +16,14 @@ export const useLeaveGameStore = create((set) => ({
   closeLeaveDialog: () => set({ isOpen: false, onConfirm: null, onCancel: null }),
 
   setLeaving: (v) => set({ leaving: !!v }),
+
+  bypassOnce: false,
+
+  allowLeaveOnce: () => set({ bypassOnce: true }),
+
+  consumeBypass: () => {
+    const active = useLeaveGameStore.getState().bypassOnce;
+    if (active) useLeaveGameStore.setState({ bypassOnce: false });
+    return active;
+  },
 }));

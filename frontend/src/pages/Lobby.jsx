@@ -99,6 +99,11 @@ export default function Lobby() {
     setLoading(true);
     setError(null);
     try {
+      const paused = await gamesApi.pausedGames().catch(() => ({ games: [] }));
+      if (paused.games && paused.games.length > 0) {
+        navigate('/paused');
+        return;
+      }
       const { id } = await gamesApi.create({
         mode: 'bot',
         bot_engine: 'stockfish',

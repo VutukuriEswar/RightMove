@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { gamesApi, coachApi, reportApi } from '../lib/api';
+import { gamesApi, coachApi, reportApi, friendsApi } from '../lib/api';
 import { buildPositions, buildPgn, formatEval, loadGameLog, moveRecordToSquares, normalizeClassification, accuracyLetter, CLASSIFICATION_META } from '../lib/chessUtils';
+import { moveCacheKey, getCachedMove, setCachedMove } from '../lib/reviewCache';
 import Board2D from '../components/board/Board2D';
 import MoveList from '../components/game/MoveList';
 import GameSummaryCard from '../components/game/GameSummaryCard';
+import { useAuthStore } from '../store/authStore';
 
 const ENGINE_INTERVAL_MS = 800;
 
@@ -26,11 +28,10 @@ export default function Review() {
   const [reportData, setReportData] = useState(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
-  const [posBusy, setPosBusy] = useState(false);
-  const [posData, setPosData] = useState(null);
   const [coachError, setCoachError] = useState(null);
   const [moveInsight, setMoveInsight] = useState(null);
   const [moveInsightBusy, setMoveInsightBusy] = useState(false);
+  const [movePosition, setMovePosition] = useState(null);
   const [copied, setCopied] = useState(false);
   const [rematchBusy, setRematchBusy] = useState(false);
   const reportRef = useRef(null);
@@ -80,6 +81,20 @@ export default function Review() {
   const playerColor = game?.player_color || 'white';
   const whiteName = game?.white_username || (playerColor === 'white' ? 'You' : 'Opponent');
   const blackName = game?.black_username || (playerColor === 'black' ? 'You' : 'Opponent');
+  const rematchTarget = useMemo(() => {
+    if (game?.mode !== 'friend') return null;
+    let me = null;
+    try {
+      me = useAuthStore.getState().user;
+    } catch (_) {
+      me = null;
+    }
+    if (me?.id && game?.white_id && game.white_id === me.id) return game.black_username || null;
+    if (me?.id && game?.black_id && game.black_id === me.id) return game.white_username || null;
+    const fallback = playerColor === 'white' ? game?.black_username : game?.white_username;
+    if (me?.username && fallback === me.username) return null;
+    return fallback || null;
+  }, [game, playerColor]);
 
   const mergedMoves = useMemo(() => {
     if (!reportData?.moves?.length) return moves;
@@ -179,37 +194,21 @@ export default function Review() {
   }, []);
 
   const handleRematch = useCallback(async () => {
-    if (rematchBusy) return;
-    const friend = playerColor === 'white' ? game?.black_username : game?.white_username;
-    if (!friend) return;
+    if (rematchBusy || !rematchTarget) return;
     setRematchBusy(true);
     setCoachError(null);
     try {
-      const { id: newId } = await gamesApi.create({
-        mode: 'friend',
-        friend_username: friend,
-        time_control_seconds: game?.time_control_seconds ?? 600,
-        increment_seconds: game?.increment_seconds ?? 0,
-      });
-      navigate(`/game/${newId}`);
+      await friendsApi.challenge(
+        rematchTarget,
+        game?.time_control_seconds ?? 600,
+        game?.increment_seconds ?? 0
+      );
+      navigate('/friends');
     } catch (err) {
-      setCoachError(err.message || 'Rematch failed');
+      setCoachError(err.message || 'Rematch challenge failed');
       setRematchBusy(false);
     }
-  }, [rematchBusy, playerColor, game, navigate]);
-
-  const analyzePosition = useCallback(async () => {
-    const fen = fens[currentMoveIdx + 1];
-    if (!fen) return;
-    setPosBusy(true); setCoachError(null);
-    try {
-      setPosData(await coachApi.position(fen));
-    } catch (err) {
-      setCoachError(err.message || 'Position analysis failed');
-    } finally {
-      setPosBusy(false);
-    }
-  }, [fens, currentMoveIdx]);
+  }, [rematchBusy, rematchTarget, game, navigate]);
 
   const scheduleNext = useCallback((fromIdx) => {
     if (fromIdx >= moves.length - 1) { setIsPlaying(false); return; }
@@ -235,20 +234,44 @@ export default function Review() {
   const step = (delta) => { setIsPlaying(false); setCurrentMoveIdx(prev => Math.max(-1, Math.min(moves.length - 1, prev + delta))); };
 
   useEffect(() => {
-    if (currentMoveIdx < 0 || !moves[currentMoveIdx]?.uci) { setMoveInsight(null); return; }
+    setMoveInsight(null);
+    setMovePosition(null);
+    if (currentMoveIdx < 0 || !moves[currentMoveIdx]?.uci) return;
     const fenBefore = fens[currentMoveIdx];
+    const fenAfter = fens[currentMoveIdx + 1];
     const uci = moves[currentMoveIdx].uci;
-    if (!fenBefore || !uci) { setMoveInsight(null); return; }
-    const key = `${fenBefore}|${uci}`;
-    if (insightCache.current.has(key)) { setMoveInsight(insightCache.current.get(key)); return; }
+    if (!fenBefore || !fenAfter || !uci) return;
+    const memKey = `${fenBefore}|${uci}`;
+    const storeKey = moveCacheKey(id, currentMoveIdx);
+    if (insightCache.current.has(memKey)) {
+      const hit = insightCache.current.get(memKey);
+      setMoveInsight(hit.insight || null);
+      setMovePosition(hit.position || null);
+      return;
+    }
     let cancelled = false;
     setMoveInsightBusy(true);
     const t = setTimeout(async () => {
       try {
-        const data = await coachApi.explain(fenBefore, uci, null, 0, null);
-        if (!cancelled && !data?.error) {
-          insightCache.current.set(key, data);
-          setMoveInsight(data);
+        const cached = await getCachedMove(storeKey).catch(() => null);
+        if (cancelled) return;
+        if (cached) {
+          insightCache.current.set(memKey, cached);
+          setMoveInsight(cached.insight || null);
+          setMovePosition(cached.position || null);
+        } else {
+          const [insight, position] = await Promise.all([
+            coachApi.explain(fenBefore, uci, null, 0, null),
+            coachApi.position(fenAfter),
+          ]);
+          if (cancelled) return;
+          const entry = {};
+          if (insight && !insight.error) entry.insight = insight;
+          if (position && !position.error) entry.position = position;
+          insightCache.current.set(memKey, entry);
+          setCachedMove(storeKey, entry).catch(() => {});
+          setMoveInsight(entry.insight || null);
+          setMovePosition(entry.position || null);
         }
       } catch (_) {
       } finally {
@@ -256,7 +279,7 @@ export default function Review() {
       }
     }, 450);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [currentMoveIdx, moves, fens]);
+  }, [currentMoveIdx, moves, fens, id]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -279,12 +302,6 @@ export default function Review() {
   const lastMove = currentMoveIdx >= 0 ? mergedMoves[currentMoveIdx] : null;
   const lastMoveSq = moveRecordToSquares(lastMove);
   const currentCls = lastMove?.classification ? normalizeClassification(lastMove.classification) : null;
-
-  const PARAM_ORDER = [
-    'material', 'piece_placement', 'mobility', 'center_control', 'king_safety',
-    'pawn_structure', 'tactical_defense', 'bishop_pair', 'rook_open_files',
-    'space_advantage', 'knight_outposts',
-  ];
 
   const accW = reportData?.accuracy_white ?? summary?.accuracy_white ?? null;
   const accB = reportData?.accuracy_black ?? summary?.accuracy_black ?? null;
@@ -395,10 +412,12 @@ export default function Review() {
             {lastMove && (
               <div className="review-coach-section">
                 <h3>Move Insight</h3>
-                {moveInsightBusy && !moveInsight && <p className="review-report-text">Explaining this move...</p>}
-                {!moveInsightBusy && !moveInsight && <p className="review-report-text">Play through the game to see coaching notes for each move.</p>}
-                {moveInsight && (
+                {moveInsightBusy && !moveInsight && !movePosition && <p className="review-report-text">Analyzing this move...</p>}
+                {!moveInsightBusy && !moveInsight && !movePosition && <p className="review-report-text">Play through the game to see coaching notes for each move.</p>}
+                {(moveInsight || movePosition) && (
                   <div>
+                    {moveInsight && (
+                    <div>
                     <p className="review-report-line"><strong>Advantages:</strong></p>
                     <p className="review-report-text">{moveInsight.thing_1?.summary || moveInsight.narrative?.advantages?.[0] || 'Solid move.'}</p>
                     {(moveInsight.thing_1?.reasons || moveInsight.narrative?.advantages || []).slice(0, 3).map((r, i) => (
@@ -419,6 +438,17 @@ export default function Review() {
                       <p className="review-report-text" style={{ marginTop: 8 }}>
                         <strong>Best was:</strong> {moveInsight.best_move.san}
                       </p>
+                    )}
+                    </div>
+                    )}
+                    {movePosition && (
+                      <div style={{ marginTop: 10 }}>
+                        <p className="review-report-line"><strong>Position after:</strong> {formatEval(movePosition.net_score_centipawns)} · {movePosition.game_phase}</p>
+                        {movePosition.verdict && <p className="review-report-text">{movePosition.verdict}</p>}
+                        {(movePosition.strategic_insights || []).slice(0, 2).map((s, i) => (
+                          <p key={i} className="review-report-text">* {s}</p>
+                        ))}
+                      </div>
                     )}
                   </div>
                 )}
@@ -539,87 +569,23 @@ export default function Review() {
                   )}
                 </div>
               )}
-              <h4 style={{ marginTop: '18px' }}>Position Tools</h4>
-              <div className="review-coach-buttons">
-                <button className="btn btn-secondary" onClick={analyzePosition} disabled={posBusy || !moves.length}>
-                  {posBusy ? 'Analyzing...' : 'Analyze Position'}
-                </button>
-              </div>
-              {posData && (
-                <div className="review-report card">
-                  <h4>Position Assessment</h4>
-                  <p className="review-report-line"><strong>Score:</strong> {formatEval(posData.net_score_centipawns)}</p>
-                  <p className="review-report-line"><strong>Phase:</strong> {posData.game_phase}</p>
-                  <p className="review-report-text">{posData.verdict}</p>
-                  {posData.strategic_insights?.map((s, i) => (
-                    <p key={i} className="review-report-text">* {s}</p>
-                  ))}
-                  {posData.pros_cons?.white && (
-                    <div>
-                      <p className="review-report-line" style={{ marginTop: 8 }}><strong>White advantages:</strong></p>
-                      {posData.pros_cons.white.advantages.map((a, i) => <p key={i} className="review-report-text">* {a}</p>)}
-                      <p className="review-report-line" style={{ marginTop: 8 }}><strong>White disadvantages:</strong></p>
-                      {posData.pros_cons.white.disadvantages.map((d, i) => <p key={i} className="review-report-text">* {d}</p>)}
-                    </div>
-                  )}
-                  {posData.pros_cons?.black && (
-                    <div>
-                      <p className="review-report-line" style={{ marginTop: 8 }}><strong>Black advantages:</strong></p>
-                      {posData.pros_cons.black.advantages.map((a, i) => <p key={i} className="review-report-text">* {a}</p>)}
-                      <p className="review-report-line" style={{ marginTop: 8 }}><strong>Black disadvantages:</strong></p>
-                      {posData.pros_cons.black.disadvantages.map((d, i) => <p key={i} className="review-report-text">* {d}</p>)}
-                    </div>
-                  )}
-                  {posData.parameters && (
-                    <div className="params-table-wrap" style={{ marginTop: '16px' }}>
-                      <p className="review-report-line" style={{ marginBottom: '8px' }}><strong>Parameters:</strong></p>
-                      <table className="params-table">
-                        <thead>
-                          <tr>
-                            <th>Parameter</th>
-                            <th>White</th>
-                            <th>Black</th>
-                            <th>Diff (W)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {PARAM_ORDER.filter((k) => posData.parameters[k]).map((k) => {
-                            const p = posData.parameters[k];
-                            const d = p.diff;
-                            return (
-                              <tr key={k} className="param-row">
-                                <td className="param-name" title={p.description}>{p.name}</td>
-                                <td className="param-val">{Math.round(p.white)}</td>
-                                <td className="param-val">{Math.round(p.black)}</td>
-                                <td className={`param-diff ${d > 0 ? 'pw' : d < 0 ? 'pb' : ''}`}>
-                                  {Number.isFinite(d) ? `${d > 0 ? '+' : ''}${Math.round(d)}` : '0'}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
-          )}
-        </div>
+          )}        </div>
         <div className="review-sidebar">
           <div className="move-list-container card">
             <MoveList moves={mergedMoves} activeIndex={currentMoveIdx} onMoveClick={(idx) => { setIsPlaying(false); setCurrentMoveIdx(idx); }} />
           </div>
           <div className="review-actions card">
             <Link to="/history" className="btn btn-secondary" style={{width:'100%',marginBottom:'8px'}}>Match History</Link>
-            {game?.mode === 'friend' && (playerColor === 'white' ? game?.black_username : game?.white_username) && (
+            {rematchTarget && (
               <button
                 className="btn btn-secondary"
                 style={{width:'100%',marginBottom:'8px'}}
                 disabled={rematchBusy}
                 onClick={handleRematch}
+                title="Send a rematch challenge"
               >
-                {rematchBusy ? 'Starting...' : '⚔ Rematch Friend'}
+                {rematchBusy ? 'Sending...' : '⚔ Rematch Friend'}
               </button>
             )}
             <Link to="/lobby" className="btn btn-primary" style={{width:'100%'}}>New Game</Link>

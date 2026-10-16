@@ -285,6 +285,7 @@ export default function AdminTraining() {
               <div className="slider-row-head"><span>{s.label}</span><em>{opts[s.key]}</em></div>
               <input
                 type="range" min={s.min} max={s.max} step={s.step} value={opts[s.key]}
+                style={{ '--fill-pct': `${((opts[s.key] - s.min) / (s.max - s.min)) * 100}%` }}
                 onChange={(e) => setOpts((o) => ({ ...o, [s.key]: Number(e.target.value) }))}
               />
             </div>
@@ -293,6 +294,7 @@ export default function AdminTraining() {
             <div className="slider-row-head"><span>Learning rate</span><em>{opts.lr}</em></div>
             <input
               type="range" min={0.0001} max={0.01} step={0.0001} value={opts.lr}
+              style={{ '--fill-pct': `${((opts.lr - 0.0001) / (0.01 - 0.0001)) * 100}%` }}
               onChange={(e) => setOpts((o) => ({ ...o, lr: Number(e.target.value) }))}
             />
           </div>

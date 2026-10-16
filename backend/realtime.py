@@ -219,6 +219,39 @@ def _set_state(game_id: str, state: GameState):
     _game_states[game_id] = state
 
 
+# Rebuilds live state from paused snapshot
+async def restore_paused_state(game_id: str) -> Optional[GameState]:
+    from bson import ObjectId
+    db = get_db()
+    try:
+        oid = ObjectId(game_id)
+    except Exception:
+        return None
+    game = await db.games.find_one({"_id": oid})
+    if not game or game.get("result") != "ongoing":
+        return None
+    snap = await db.paused_games.find_one({"game_id": game_id})
+    if not snap:
+        return None
+    try:
+        board = chess.Board(snap["fen"])
+    except Exception:
+        return None
+    state = GameState(game)
+    state.board = board
+    state.moves = snap.get("moves") or []
+    clocks = snap.get("clocks") or {}
+    state.clocks = {
+        "white": clocks.get("white", state.time_control),
+        "black": clocks.get("black", state.time_control),
+    }
+    state.last_move_time = time.time()
+    state.clock_running = False
+    state.redo_stack = []
+    _set_state(game_id, state)
+    return state
+
+
 # Returns bot engine move as UCI
 async def _get_engine_move(
     board: chess.Board,

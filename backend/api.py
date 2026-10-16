@@ -210,6 +210,17 @@ async def upload_avatar(
     updated = await db.users.find_one({"_id": current_user["_id"]})
     return _to_public(updated)
 
+# Normalizes Mongo datetime to UTC-aware for serialization
+def _as_utc(value):
+    if value is None:
+        return None
+    try:
+        if getattr(value, "tzinfo", None) is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    except Exception:
+        return value
+
 # Section api/games
 
 games_router = APIRouter(prefix="/games", tags=["games"])
@@ -362,13 +373,136 @@ async def get_my_history(
             "mine": mine,
             "opponent": names.get(opp_id) if opp_id else None,
             "opponent_id": opp_id,
-            "started_at": g.get("started_at"),
+            "started_at": _as_utc(g.get("started_at")),
             "time_control_seconds": g.get("time_control_seconds", 600),
             "increment_seconds": g.get("increment_seconds", 0),
             "moves_count": len(g.get("moves") or []),
             "has_moves": bool(g.get("moves")),
         })
     return {"games": out, "limit": limit, "skip": skip}
+
+# Validates paused-game access for owner
+async def _paused_game_or_404(db, game_id: str, user_id: str):
+    from bson import ObjectId as _OID
+    try:
+        oid = _OID(game_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Game not found")
+    game = await db.games.find_one({"_id": oid})
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if game.get("mode") != "bot":
+        raise HTTPException(status_code=400, detail="Only coach games can be paused")
+    if game.get("result") != "ongoing":
+        raise HTTPException(status_code=400, detail="Game is already finished")
+    if user_id not in (game.get("white_id"), game.get("black_id")):
+        raise HTTPException(status_code=403, detail="Not your game")
+    return game
+
+# Lists paused coach games for current user
+@games_router.get("/mine/paused")
+async def get_paused_games(current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    cursor = db.paused_games.find(
+        {"user_id": str(current_user["_id"])}
+    ).sort("paused_at", -1).limit(100)
+    docs = await cursor.to_list(100)
+    out = []
+    for d in docs:
+        moves = d.get("moves") or []
+        out.append({
+            "game_id": d["game_id"],
+            "paused_at": _as_utc(d.get("paused_at")),
+            "bot_engine": d.get("bot_engine"),
+            "bot_depth": d.get("bot_depth"),
+            "maia_elo": d.get("maia_elo"),
+            "player_color": d.get("player_color"),
+            "training_mode": d.get("training_mode", False),
+            "time_control_seconds": d.get("time_control_seconds", 600),
+            "increment_seconds": d.get("increment_seconds", 0),
+            "moves_count": len(moves),
+            "fen": d.get("fen"),
+        })
+    return {"games": out}
+
+# Pauses live coach game and snapshots state
+@games_router.post("/{game_id}/pause")
+async def pause_game(game_id: str, current_user: dict = Depends(get_current_user)):
+    from realtime import _get_state, live_clocks
+    db = get_db()
+    user_id = str(current_user["_id"])
+    game = await _paused_game_or_404(db, game_id, user_id)
+    state = _get_state(game_id)
+    if state is None or state.result:
+        raise HTTPException(status_code=409, detail="Game is not live right now")
+    state.clock_running = False
+    clocks = live_clocks(state)
+    await db.paused_games.replace_one(
+        {"game_id": game_id},
+        {
+            "game_id": game_id,
+            "user_id": user_id,
+            "fen": state.board.fen(),
+            "moves": state.moves,
+            "clocks": clocks,
+            "time_control_seconds": game.get("time_control_seconds", 600),
+            "increment_seconds": game.get("increment_seconds", 0),
+            "bot_engine": game.get("bot_engine"),
+            "bot_depth": game.get("bot_depth"),
+            "maia_elo": game.get("maia_elo"),
+            "player_color": game.get("player_color"),
+            "training_mode": game.get("training_mode", False),
+            "paused_at": datetime.now(timezone.utc),
+        },
+        upsert=True,
+    )
+    return {"status": "paused", "game_id": game_id}
+
+# Resumes paused coach game
+@games_router.post("/{game_id}/resume")
+async def resume_game(game_id: str, current_user: dict = Depends(get_current_user)):
+    from realtime import _get_state, _ensure_clock_task, restore_paused_state
+    import time as _time
+    db = get_db()
+    user_id = str(current_user["_id"])
+    await _paused_game_or_404(db, game_id, user_id)
+    snap = await db.paused_games.find_one({"game_id": game_id})
+    if not snap:
+        raise HTTPException(status_code=404, detail="No paused snapshot for this game")
+    state = _get_state(game_id)
+    if state is None or state.result:
+        state = await restore_paused_state(game_id)
+    if state is None:
+        raise HTTPException(status_code=409, detail="Could not restore game")
+    state.last_move_time = _time.time()
+    state.clock_running = True
+    _ensure_clock_task(game_id, state)
+    await db.paused_games.delete_one({"game_id": game_id})
+    return {"status": "resumed", "game_id": game_id}
+
+# Resigns paused coach game without resuming
+@games_router.post("/{game_id}/resign-paused")
+async def resign_paused_game(game_id: str, current_user: dict = Depends(get_current_user)):
+    from realtime import _get_state, _end_game
+    db = get_db()
+    user_id = str(current_user["_id"])
+    game = await _paused_game_or_404(db, game_id, user_id)
+    snap = await db.paused_games.find_one({"game_id": game_id})
+    if not snap:
+        raise HTTPException(status_code=404, detail="No paused snapshot for this game")
+    winner = "black" if game.get("white_id") == user_id else "white"
+    moves = snap.get("moves") or []
+    state = _get_state(game_id)
+    if state is not None and not state.result:
+        await _end_game(game_id, state, winner)
+    else:
+        from bson import ObjectId as _OID
+        await db.games.update_one(
+            {"_id": _OID(game_id)},
+            {"$set": {"result": winner, "moves": moves}},
+        )
+    await db.paused_games.delete_one({"game_id": game_id})
+    return {"status": "resigned", "game_id": game_id, "result": winner}
 
 # Fetches game by identifier
 @games_router.get("/{game_id}", response_model=GamePublic)
@@ -481,8 +615,8 @@ def _game_to_public(game: dict, white_username: str = None, black_username: str 
         player_color=game.get("player_color"),
         training_mode=game.get("training_mode", False),
         result=game["result"],
-        started_at=game["started_at"],
-        ended_at=game.get("ended_at"),
+        started_at=_as_utc(game["started_at"]),
+        ended_at=_as_utc(game.get("ended_at")),
         time_control_seconds=game.get("time_control_seconds", 600),
         increment_seconds=game.get("increment_seconds", 0),
     )
@@ -891,7 +1025,7 @@ async def friend_record(username: str, current_user: dict = Depends(get_current_
     last_played = None
     first_met = None
     if recent_games:
-        last_played = recent_games[0].get("started_at")
+        last_played = _as_utc(recent_games[0].get("started_at"))
     oldest = await db.games.find(
         {
             "$and": [
@@ -903,7 +1037,7 @@ async def friend_record(username: str, current_user: dict = Depends(get_current_
         {"started_at": 1},
     ).sort("started_at", 1).limit(1).to_list(1)
     if oldest:
-        first_met = oldest[0].get("started_at")
+        first_met = _as_utc(oldest[0].get("started_at"))
 
     diff = wins - losses
     if total < 3:
@@ -950,7 +1084,7 @@ async def friend_record(username: str, current_user: dict = Depends(get_current_
             "mine": _mine(g),
             "result": g.get("result"),
             "mode": g.get("mode"),
-            "started_at": g.get("started_at"),
+            "started_at": _as_utc(g.get("started_at")),
         })
 
     played = wins + losses + draws
@@ -1039,7 +1173,7 @@ async def incoming_challenges(current_user: dict = Depends(get_current_user)):
             "increment_seconds": d.get("increment_seconds", 0),
             "color_preference": d.get("color_preference", "random"),
             "status": d.get("status", "pending"),
-            "created_at": d.get("created_at"),
+            "created_at": _as_utc(d.get("created_at")),
         }
         for d in docs
     ]}
@@ -1062,7 +1196,7 @@ async def outgoing_challenges(current_user: dict = Depends(get_current_user)):
             "color_preference": d.get("color_preference", "random"),
             "status": d.get("status", "pending"),
             "game_id": d.get("game_id"),
-            "created_at": d.get("created_at"),
+            "created_at": _as_utc(d.get("created_at")),
         }
         for d in docs
     ]}
@@ -2334,7 +2468,7 @@ def _pub_user(u: dict) -> dict:
         "email": u.get("email"),
         "role": u.get("role", "user"),
         "is_blocked": bool(u.get("is_blocked", False)),
-        "created_at": u.get("created_at"),
+        "created_at": _as_utc(u.get("created_at")),
         "avatar_url": u.get("avatar_url"),
         "bio": u.get("bio"),
     }
@@ -2409,7 +2543,7 @@ async def user_overview(user_id: str, admin: dict = Depends(require_admin)):
     async for g in db.games.find(filt).sort("started_at", -1).limit(20):
         games.append({
             "id": str(g["_id"]), "mode": g.get("mode"), "result": g.get("result"),
-            "bot_engine": g.get("bot_engine"), "started_at": g.get("started_at"),
+            "bot_engine": g.get("bot_engine"), "started_at": _as_utc(g.get("started_at")),
         })
     try:
         games_played = await db.games.count_documents(filt)
@@ -2703,7 +2837,7 @@ async def _run_training(job_id: str, cfg: dict, created_by: str,
             "positions": len(ds),
             "published": published,
             "created_by": created_by,
-            "created_at": job.get("created_at"),
+            "created_at": _as_utc(job.get("created_at")),
         })
         removed_epochs: list[str] = []
         for p in epoch_ckpts:

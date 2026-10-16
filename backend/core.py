@@ -266,6 +266,9 @@ async def create_indexes():
 
     await db.game_summaries.create_index("game_id", unique=True)
 
+    await db.paused_games.create_index("user_id")
+    await db.paused_games.create_index("game_id", unique=True)
+
     await db.training_jobs.create_index("job_id", unique=True)
     await db.gm_models.create_index("model_id", unique=True)
 

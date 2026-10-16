@@ -17,7 +17,7 @@ function GuardHost({ onResign }) {
 
 function resetStores() {
   useGameStore.setState({ gameId: null, mode: null, result: null });
-  useLeaveGameStore.setState({ isOpen: false, onConfirm: null, onCancel: null });
+  useLeaveGameStore.setState({ isOpen: false, onConfirm: null, onCancel: null, leaving: false, bypassOnce: false });
   useSessionStore.setState({ owned: true, suspended: false, movedAway: false, idle: false, prompt: null, tabId: 'test-tab' });
 }
 
@@ -105,4 +105,42 @@ test('finished games (result set) are not blocked', async () => {
   });
   expect(router.state.location.pathname).toBe('/lobby');
   expect(useLeaveGameStore.getState().isOpen).toBe(false);
+});
+
+test('allowLeaveOnce bypasses the dialog once without resigning', async () => {
+  const resign = jest.fn();
+  const { useSessionStore } = require('../store/sessionStore');
+  useSessionStore.setState({ owned: true, suspended: false, movedAway: false, idle: false, prompt: null, tabId: 'test-tab' });
+  useGameStore.setState({ gameId: 'g1', mode: 'bot', result: null });
+  const router = createMemoryRouter(
+    [
+      { path: '/game/:id', element: <GuardHost onResign={resign} /> },
+      { path: '/paused', element: <div>paused-ok</div> },
+    ],
+    { initialEntries: ['/game/g1'] }
+  );
+  render(<RouterProvider router={router} />);
+
+  await act(async () => {
+    useLeaveGameStore.getState().allowLeaveOnce();
+    await router.navigate('/paused');
+  });
+  expect(router.state.location.pathname).toBe('/paused');
+  expect(useLeaveGameStore.getState().isOpen).toBe(false);
+  expect(useLeaveGameStore.getState().bypassOnce).toBe(false);
+  expect(resign).not.toHaveBeenCalled();
+  expect(screen.getByText('paused-ok')).toBeInTheDocument();
+
+  await act(async () => {
+    await router.navigate('/game/g1');
+  });
+  expect(router.state.location.pathname).toBe('/game/g1');
+  expect(useLeaveGameStore.getState().isOpen).toBe(false);
+
+  await act(async () => {
+    await router.navigate('/paused');
+  });
+  expect(router.state.location.pathname).toBe('/game/g1');
+  expect(useLeaveGameStore.getState().isOpen).toBe(true);
+  expect(resign).not.toHaveBeenCalled();
 });
