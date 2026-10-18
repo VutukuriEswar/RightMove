@@ -72,6 +72,8 @@ export const gamesApi = {
     api.post(`/games/${gameId}/choose-color`, { player_color }),
   updateBotConfig: (gameId, cfg) =>
     api.patch(`/games/${gameId}/bot-config`, cfg),
+  createFromPgn: (pgn) => api.post('/games/import-pgn', { pgn }),
+  importPgn: (gameId, pgn) => api.post(`/games/${gameId}/import-pgn`, { pgn }),
 };
 
 export const adminApi = {
@@ -142,8 +144,14 @@ export const friendsApi = {
   cancelRequest: (username) => api.delete(`/friends/request/${encodeURIComponent(username)}`),
   record: (username) => api.get(`/friends/${encodeURIComponent(username)}/record`),
   remove: (username) => api.delete(`/friends/${encodeURIComponent(username)}`),
-  challenge: (username, tc = 600, inc = 0, color = 'random') =>
-    api.post('/friends/challenge', { username, time_control_seconds: tc, increment_seconds: inc, color_preference: color }),
+  challenge: (username, tc = 600, inc = 0, color = 'random', pgn = null) =>
+    api.post('/friends/challenge', {
+      username,
+      time_control_seconds: tc,
+      increment_seconds: inc,
+      color_preference: color,
+      ...(pgn ? { pgn } : {}),
+    }),
   incomingChallenges: () => api.get('/friends/challenges/incoming'),
   outgoingChallenges: () => api.get('/friends/challenges/outgoing'),
   acceptChallenge: (id) => api.post(`/friends/challenges/${encodeURIComponent(id)}/accept`, {}),

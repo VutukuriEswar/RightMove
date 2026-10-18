@@ -22,6 +22,8 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
   const [swapError, setSwapError] = useState(null);
   const [cfgBusy, setCfgBusy] = useState(false);
   const [cfgError, setCfgError] = useState(null);
+  const [showWinChances, setShowWinChances] = useState(true);
+  const [showSetup, setShowSetup] = useState(true);
 
   const started = moves.length > 0;
   const isBotGame = mode === 'bot';
@@ -117,113 +119,146 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
   return (
     <div className="play-sidebar">
       <div className="card play-card">
-        <h4 className="coach-card-title">🏆 Win chances</h4>
-        <WdlBar userWin={userWin} draw={draw} botWin={botWin} />
-      </div>
-
-      <div className="card play-card">
-        <h4 className="coach-card-title">⚙️ Setup</h4>
-        {!started ? (
-          <div className="play-setup-edit">
-            <div className="play-setup-engines">
-              {[
-                { value: 'stockfish', label: 'Stockfish' },
-                { value: 'maia3', label: 'Maia' },
-              ].map((e) => (
-                <button
-                  key={e.value}
-                  type="button"
-                  className={`btn-sm interactive ${botEngine === e.value ? 'active' : ''}`}
-                  onClick={() => handleEngine(e.value)}
-                  disabled={cfgBusy || swapBusy}
-                >
-                  {e.label}
-                </button>
-              ))}
-            </div>
-            {botEngine === 'maia3' ? (
-              <label className="play-setup-slider">
-                <span>Difficulty — Maia rating</span>
-                <strong>{maiaElo ?? 1500}</strong>
-                <input
-                  type="range" min="1100" max="2000" step="50"
-                  value={maiaElo ?? 1500}
-                  style={{ '--fill-pct': `${(((maiaElo ?? 1500) - 1100) / 900) * 100}%` }}
-                  onChange={(e) => handleDifficulty(Number(e.target.value))}
-                  disabled={cfgBusy}
-                />
-              </label>
-            ) : (
-              <label className="play-setup-slider">
-                <span>Difficulty — Stockfish depth</span>
-                <strong>{botDepth ?? 10}</strong>
-                <input
-                  type="range" min="1" max="20"
-                  value={botDepth ?? 10}
-                  style={{ '--fill-pct': `${(((botDepth ?? 10) - 1) / 19) * 100}%` }}
-                  onChange={(e) => handleDifficulty(Number(e.target.value))}
-                  disabled={cfgBusy}
-                />
-              </label>
-            )}
-            <div className="play-setup-colors">
-              {['white', 'black'].map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className={`btn-sm interactive ${playerColor === c ? 'active' : ''}`}
-                  onClick={() => handleColor(c)}
-                  disabled={cfgBusy || swapBusy}
-                  style={{ textTransform: 'capitalize' }}
-                >
-                  {c === 'white' ? '♔ White' : '♚ Black'}
-                </button>
-              ))}
-            </div>
-            {(cfgError || swapError) && (
-              <p className="coach-text" style={{ color: 'var(--danger-t)' }}>{cfgError || swapError}</p>
-            )}
-            <p className="coach-text">Choose engine, strength and your color — locked once you move.</p>
+        <button
+          type="button"
+          className={`params-toggle interactive ${showWinChances ? 'open' : ''}`}
+          onClick={() => setShowWinChances((v) => !v)}
+          aria-expanded={showWinChances}
+        >
+          <span>🏆 Win chances</span>
+          <span className="params-chevron">{showWinChances ? '▾' : '▸'}</span>
+        </button>
+        {showWinChances && (
+          <div style={{ marginTop: '8px' }}>
+            <WdlBar userWin={userWin} draw={draw} botWin={botWin} />
           </div>
-        ) : (
-          <>
-            <div className="play-setup-row">
-              <span>Engine</span>
-              <strong>{botEngine === 'maia3' ? 'Maia' : 'Stockfish'}</strong>
-            </div>
-            <div className="play-setup-row">
-              <span>Difficulty</span>
-              <strong>{botEngine === 'maia3' ? `Rating ${maiaElo ?? '—'}` : `Depth ${botDepth ?? '—'}`}</strong>
-            </div>
-            <div className="play-setup-row">
-              <span>You play</span>
-              <strong style={{ textTransform: 'capitalize' }}>{playerColor}</strong>
-            </div>
-            <p className="coach-text">🔒 Locked — settings can't change mid-game.</p>
-          </>
         )}
       </div>
 
       <div className="card play-card">
-        <div className="play-btn-grid">
-          {showBotFirst && (
-            <button className="btn-sm interactive" onClick={onBotFirst}>
-              🤖 Bot starts
-            </button>
-          )}
-          {isBotGame && (
-            <>
-              <button className="btn-sm interactive" onClick={onTakeback} disabled={!canTakeback}>
-                ↩ Takeback
-              </button>
-              <button className="btn-sm interactive" onClick={onRedo} disabled={!canRedo}>
-                ↪ Redo
-              </button>
-            </>
-          )}
-        </div>
-        {started && swapError && <p className="coach-text" style={{ color: 'var(--danger-t)' }}>{swapError}</p>}
+        <button
+          type="button"
+          className={`params-toggle interactive ${showSetup ? 'open' : ''}`}
+          onClick={() => setShowSetup((v) => !v)}
+          aria-expanded={showSetup}
+        >
+          <span>⚙️ Setup</span>
+          <span className="params-chevron">{showSetup ? '▾' : '▸'}</span>
+        </button>
+        {showSetup && (
+          <div style={{ marginTop: '8px' }}>
+            {!isBotGame ? (
+              <div className="play-setup-edit">
+                <div className="play-setup-row">
+                  <span>Mode</span>
+                  <strong style={{ textTransform: 'capitalize' }}>{mode?.replace(/_/g, ' ') || 'Match'}</strong>
+                </div>
+              </div>
+            ) : !started ? (
+              <div className="play-setup-edit">
+                <div className="play-setup-engines">
+                  {[
+                    { value: 'stockfish', label: 'Stockfish' },
+                    { value: 'maia3', label: 'Maia' },
+                  ].map((e) => (
+                    <button
+                      key={e.value}
+                      type="button"
+                      className={`btn-sm interactive ${botEngine === e.value ? 'active' : ''}`}
+                      onClick={() => handleEngine(e.value)}
+                      disabled={cfgBusy || swapBusy}
+                    >
+                      {e.label}
+                    </button>
+                  ))}
+                </div>
+                {botEngine === 'maia3' ? (
+                  <label className="play-setup-slider">
+                    <span>Difficulty — Maia rating</span>
+                    <strong>{maiaElo ?? 1500}</strong>
+                    <input
+                      type="range" min="1100" max="2000" step="50"
+                      value={maiaElo ?? 1500}
+                      style={{ '--fill-pct': `${(((maiaElo ?? 1500) - 1100) / 900) * 100}%` }}
+                      onChange={(e) => handleDifficulty(Number(e.target.value))}
+                      disabled={cfgBusy}
+                    />
+                  </label>
+                ) : (
+                  <label className="play-setup-slider">
+                    <span>Difficulty — Stockfish depth</span>
+                    <strong>{botDepth ?? 10}</strong>
+                    <input
+                      type="range" min="1" max="20"
+                      value={botDepth ?? 10}
+                      style={{ '--fill-pct': `${(((botDepth ?? 10) - 1) / 19) * 100}%` }}
+                      onChange={(e) => handleDifficulty(Number(e.target.value))}
+                      disabled={cfgBusy}
+                    />
+                  </label>
+                )}
+                <div className="play-setup-colors">
+                  {['white', 'black'].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`btn-sm interactive ${playerColor === c ? 'active' : ''}`}
+                      onClick={() => handleColor(c)}
+                      disabled={cfgBusy || swapBusy}
+                      style={{ textTransform: 'capitalize' }}
+                    >
+                      {c === 'white' ? '♔ White' : '♚ Black'}
+                    </button>
+                  ))}
+                </div>
+                {(cfgError || swapError) && (
+                  <p className="coach-text" style={{ color: 'var(--danger-t)' }}>{cfgError || swapError}</p>
+                )}
+                <p className="coach-text">Choose engine, strength and your color — locked once you move.</p>
+              </div>
+            ) : (
+              <>
+                <div className="play-setup-row">
+                  <span>Engine</span>
+                  <strong>{botEngine === 'maia3' ? 'Maia' : 'Stockfish'}</strong>
+                </div>
+                <div className="play-setup-row">
+                  <span>Difficulty</span>
+                  <strong>{botEngine === 'maia3' ? `Rating ${maiaElo ?? '—'}` : `Depth ${botDepth ?? '—'}`}</strong>
+                </div>
+                <div className="play-setup-row">
+                  <span>You play</span>
+                  <strong style={{ textTransform: 'capitalize' }}>{playerColor}</strong>
+                </div>
+                <p className="coach-text">🔒 Locked — settings can't change mid-game.</p>
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      {(showBotFirst || isBotGame) && (
+        <div className="card play-card">
+          <div className="play-btn-grid">
+            {showBotFirst && (
+              <button className="btn-sm interactive" onClick={onBotFirst}>
+                🤖 Bot starts
+              </button>
+            )}
+            {isBotGame && (
+              <>
+                <button className="btn-sm interactive" onClick={onTakeback} disabled={!canTakeback}>
+                  ↩ Takeback
+                </button>
+                <button className="btn-sm interactive" onClick={onRedo} disabled={!canRedo}>
+                  ↪ Redo
+                </button>
+              </>
+            )}
+          </div>
+          {started && swapError && <p className="coach-text" style={{ color: 'var(--danger-t)' }}>{swapError}</p>}
+        </div>
+      )}
 
       <ParametersPanel fen={fen} playerColor={playerColor} onProbs={setProbs} />
     </div>

@@ -403,6 +403,7 @@ class ChallengeRequest(BaseModel):
     time_control_seconds: int = Field(600, ge=0, le=3600)
     increment_seconds: int = Field(0, ge=0, le=60)
     color_preference: Optional[str] = Field("random")
+    pgn: Optional[str] = None
 
 
 # Represents public friendship data

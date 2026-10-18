@@ -28,6 +28,7 @@ export default function FriendCard({
   busy,
   waiting,
   onChallenge,
+  onChallengePgn,
   onRemove,
 }) {
   const navigate = useNavigate();
@@ -36,7 +37,9 @@ export default function FriendCard({
   const [selectedColor, setSelectedColor] = useState('random');
   const [showHistory, setShowHistory] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [importingPgn, setImportingPgn] = useState(false);
   const dropdownRef = useRef(null);
+  const pgnFileRef = useRef(null);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -75,6 +78,26 @@ export default function FriendCard({
         selectedColor,
         false
       );
+    }
+  };
+
+  const handlePgnFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setImportingPgn(true);
+    try {
+      const text = await file.text();
+      onChallengePgn?.(
+        friend.username,
+        text,
+        selectedTc.tc,
+        selectedTc.inc,
+        selectedColor
+      );
+    } catch (_) {
+    } finally {
+      setImportingPgn(false);
     }
   };
 
@@ -273,6 +296,38 @@ export default function FriendCard({
             {busy ? 'Sending...' : `⚔️ Challenge ${friend.username}`}
           </button>
         )}
+
+        <button
+          type="button"
+          className="btn-neon interactive"
+          style={{
+            width: '100%',
+            marginTop: '8px',
+            background: 'transparent',
+            color: 'var(--royal-gold, #D4AF37)',
+            borderColor: 'var(--royal-gold, #D4AF37)',
+            padding: '8px 12px',
+            fontSize: '0.82rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            opacity: (busy || waiting || importingPgn) ? 0.45 : 1,
+            cursor: (busy || waiting || importingPgn) ? 'not-allowed' : 'pointer',
+          }}
+          disabled={busy || waiting || importingPgn}
+          title={waiting ? 'Cannot import PGN while a challenge is pending' : `Import PGN and send challenge to resume with ${friend.username}`}
+          onClick={() => pgnFileRef.current?.click()}
+        >
+          {importingPgn ? 'Importing PGN...' : '📥 Import PGN & Challenge'}
+        </button>
+        <input
+          ref={pgnFileRef}
+          type="file"
+          accept=".pgn"
+          style={{ display: 'none' }}
+          onChange={handlePgnFileSelect}
+        />
 
         <div className="friend-secondary-actions">
           {hasBattles && recentGames.length > 0 && (

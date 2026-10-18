@@ -126,8 +126,14 @@ class GameState:
         self.time_control = game_doc.get("time_control_seconds", 600) * 1000
         self.increment = game_doc.get("increment_seconds", 0) * 1000
 
-        self.board = chess.Board()
-        self.moves: list[dict] = []
+        if game_doc.get("fen"):
+            try:
+                self.board = chess.Board(game_doc["fen"])
+            except Exception:
+                self.board = chess.Board()
+        else:
+            self.board = chess.Board()
+        self.moves: list[dict] = list(game_doc.get("moves") or [])
         self.redo_stack: list[dict] = []
         self.clocks = {
             "white": self.time_control,
@@ -341,6 +347,7 @@ async def handle_game_socket(
             "bot_engine": state.bot_engine,
             "bot_depth": state.bot_depth,
             "maia_elo": state.maia_elo,
+            "player_color": state.player_color,
         },
     })
 
@@ -471,9 +478,7 @@ async def handle_game_socket(
                     state.ready_players.add(user_id)
                     both_ids = {state.white_id, state.black_id} - {None}
                     if both_ids and state.ready_players.issuperset(both_ids):
-                        # Both players ready — start the clock
-                        if len(state.moves) == 0:
-                            state.last_move_time = time.time()
+                        state.last_move_time = time.time()
                         state.clock_running = True
                         _ensure_clock_task(game_id, state)
                         await manager.broadcast(game_id, {"type": "both_ready", "payload": {}})
@@ -500,6 +505,9 @@ async def _handle_move(
 
     is_white_turn = state.board.turn == chess.WHITE
     if (is_white_turn and user_id != state.white_id and state.mode != "pass_and_play"):
+        await manager.send_to(websocket, {"type": "error", "payload": {"msg": "Not your turn"}})
+        return
+    if (not is_white_turn and user_id != state.black_id and state.mode != "pass_and_play"):
         await manager.send_to(websocket, {"type": "error", "payload": {"msg": "Not your turn"}})
         return
 

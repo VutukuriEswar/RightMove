@@ -50,13 +50,13 @@ export default function ParametersPanel({ fen, playerColor = 'white', onProbs })
         <span>📊 Parameters {busy ? '…' : ''}</span>
         <span className="params-chevron">{open ? '▾' : '▸'}</span>
       </button>
-      {meta && Number.isFinite(meta.net) && (
-        <p className="coach-text">
-          Eval <strong>{(meta.net / 100).toFixed(2)}</strong>
-        </p>
-      )}
       {open && (
         <>
+          {meta && Number.isFinite(meta.net) && (
+            <p className="coach-text">
+              Eval <strong>{(meta.net / 100).toFixed(2)}</strong>
+            </p>
+          )}
           {!params && <p className="coach-text">Analyzing position…</p>}
           {params && (
             <div className="param-rows">

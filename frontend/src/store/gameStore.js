@@ -26,6 +26,8 @@ export const useGameStore = create((set, get) => ({
   waitingForOpponent: false,
   opponentUsername: null,
   boardFlipped: false,
+  gameBegun: false,
+  setGameBegun: (begun) => set({ gameBegun: begun }),
   initGame: (gameId, mode, playerColor, timeControlMs, trainingMode, extra = {}) => {
     const prev = get();
     if (prev.gameId === gameId && prev.moves.length > 0) {
@@ -67,6 +69,7 @@ export const useGameStore = create((set, get) => ({
       waitingForOpponent: false,
       opponentUsername: null,
       boardFlipped: false,
+      gameBegun: false,
     });
   },
 
@@ -125,5 +128,6 @@ export const useGameStore = create((set, get) => ({
       waitingForOpponent: false,
       opponentUsername: null,
       boardFlipped: false,
+      gameBegun: false,
     }),
 }));

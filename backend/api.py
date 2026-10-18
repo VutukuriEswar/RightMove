@@ -504,6 +504,160 @@ async def resign_paused_game(game_id: str, current_user: dict = Depends(get_curr
     await db.paused_games.delete_one({"game_id": game_id})
     return {"status": "resigned", "game_id": game_id, "result": winner}
 
+# Parses PGN text into validated move list and board
+def _parse_pgn_moves(pgn_text: str):
+    import io
+    import chess
+    import chess.pgn
+    try:
+        pgn_game = chess.pgn.read_game(io.StringIO(pgn_text.strip()))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"PGN parse error: {e}")
+    if not pgn_game:
+        raise HTTPException(status_code=400, detail="Invalid PGN file format")
+    board = pgn_game.board()
+    moves_list = []
+    for node in pgn_game.mainline():
+        move = node.move
+        if move not in board.legal_moves:
+            raise HTTPException(status_code=400, detail=f"Illegal move in PGN: {move.uci()}")
+        san = board.san(move)
+        uci_str = move.uci()
+        board.push(move)
+        moves_list.append({
+            "ply": len(moves_list) + 1,
+            "san": san,
+            "uci": uci_str,
+            "from_sq": uci_str[:2],
+            "to_sq": uci_str[2:4],
+            "time_spent_ms": 0,
+            "elapsed_ms": 0,
+            "clock_remaining_ms": 0,
+            "fen": board.fen(),
+        })
+    if len(moves_list) == 0:
+        raise HTTPException(status_code=400, detail="PGN file contains no moves")
+    if board.is_game_over():
+        raise HTTPException(status_code=400, detail="This PGN game is already completed")
+    turn_color = "white" if board.turn == chess.WHITE else "black"
+    return moves_list, board, turn_color
+
+# Creates new coach game from imported PGN
+@games_router.post("/import-pgn")
+async def import_pgn_game(body: dict, current_user: dict = Depends(get_current_user)):
+    pgn_text = str((body or {}).get("pgn", "") or "")
+    if not pgn_text.strip():
+        raise HTTPException(status_code=400, detail="PGN content is required")
+    moves_list, board, turn_color = _parse_pgn_moves(pgn_text)
+    user_id = str(current_user["_id"])
+    white_id = user_id if turn_color == "white" else None
+    black_id = user_id if turn_color == "black" else None
+    bot_engine = (body.get("bot_engine") or "").lower() or _pick_coach_engine()
+    if bot_engine not in ("stockfish", "maia3"):
+        bot_engine = "stockfish"
+    bot_depth = body.get("bot_depth") or 10
+    maia_elo = body.get("maia_elo") or 1500
+    db = get_db()
+    game = GameDoc(
+        white_id=white_id,
+        black_id=black_id,
+        mode="bot",
+        bot_engine=bot_engine,
+        bot_level=5,
+        bot_depth=bot_depth,
+        maia_elo=maia_elo,
+        player_color=turn_color,
+        training_mode=True,
+        time_control_seconds=0,
+        increment_seconds=0,
+    )
+    game_dict = game.model_dump(exclude={"id"})
+    game_dict["fen"] = board.fen()
+    game_dict["moves"] = moves_list
+    result = await db.games.insert_one(game_dict)
+    game_id = str(result.inserted_id)
+    game_dict["_id"] = result.inserted_id
+
+    from realtime import GameState, _set_state
+    state = GameState(game_dict)
+    _set_state(game_id, state)
+
+    return {"id": game_id, "status": "ok", "moves_count": len(moves_list), "player_color": turn_color}
+
+# Imports PGN moves into an existing empty coach game
+@games_router.post("/{game_id}/import-pgn")
+async def import_pgn_into_game(game_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    from bson import ObjectId as _OID
+    from realtime import _get_state, manager, live_clocks
+    pgn_text = str((body or {}).get("pgn", "") or "")
+    if not pgn_text.strip():
+        raise HTTPException(status_code=400, detail="PGN content is required")
+    db = get_db()
+    try:
+        oid = _OID(game_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Game not found")
+    game = await db.games.find_one({"_id": oid})
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    user_id = str(current_user["_id"])
+    if user_id not in (game.get("white_id"), game.get("black_id")):
+        raise HTTPException(status_code=403, detail="Not your game")
+    if game.get("mode") != "bot":
+        raise HTTPException(status_code=400, detail="Only coach games can import PGN")
+    if game.get("result") != "ongoing":
+        raise HTTPException(status_code=400, detail="Game is already finished")
+    existing_moves = game.get("moves") or []
+    state = _get_state(game_id)
+    if (state and len(state.moves) > 0) or len(existing_moves) > 0:
+        raise HTTPException(status_code=400, detail="Cannot import PGN while game is already in progress")
+
+    moves_list, board, turn_color = _parse_pgn_moves(pgn_text)
+    white_id = user_id if turn_color == "white" else None
+    black_id = user_id if turn_color == "black" else None
+
+    await db.games.update_one(
+        {"_id": oid},
+        {"$set": {
+            "fen": board.fen(),
+            "moves": moves_list,
+            "player_color": turn_color,
+            "white_id": white_id,
+            "black_id": black_id,
+        }}
+    )
+
+    if state:
+        state.board = board
+        state.moves = moves_list
+        state.redo_stack = []
+        state.player_color = turn_color
+        state.white_id = white_id
+        state.black_id = black_id
+        await manager.broadcast(game_id, {
+            "type": "game_state",
+            "payload": {
+                "fen": state.board.fen(),
+                "clocks": live_clocks(state),
+                "moves": state.moves,
+                "result": state.result,
+                "can_takeback": bool(state.mode == "bot" and len(state.moves) > 0 and not state.result),
+                "can_redo": False,
+                "bot_engine": state.bot_engine,
+                "bot_depth": state.bot_depth,
+                "maia_elo": state.maia_elo,
+                "player_color": state.player_color,
+            },
+        })
+
+    return {
+        "status": "ok",
+        "game_id": game_id,
+        "moves": moves_list,
+        "fen": board.fen(),
+        "player_color": turn_color,
+    }
+
 # Fetches game by identifier
 @games_router.get("/{game_id}", response_model=GamePublic)
 async def get_game(game_id: str):
@@ -1141,6 +1295,18 @@ async def send_challenge(body: ChallengeRequest, current_user: dict = Depends(ge
     if color_pref not in ("white", "black", "random"):
         color_pref = "random"
 
+    pgn_text = str(getattr(body, "pgn", "") or "").strip()
+    is_imported = False
+    fen_val = None
+    moves_val = None
+    turn_color = None
+    moves_count = 0
+    if pgn_text:
+        moves_val, board_val, turn_color = _parse_pgn_moves(pgn_text)
+        fen_val = board_val.fen()
+        moves_count = len(moves_val)
+        is_imported = True
+
     doc = {
         "from_id": user_id,
         "from_username": current_user["username"],
@@ -1152,9 +1318,20 @@ async def send_challenge(body: ChallengeRequest, current_user: dict = Depends(ge
         "status": "pending",
         "game_id": None,
         "created_at": datetime.now(timezone.utc),
+        "is_imported_pgn": is_imported,
+        "pgn": pgn_text if is_imported else None,
+        "fen": fen_val,
+        "moves": moves_val,
+        "turn_color": turn_color,
+        "moves_count": moves_count,
     }
     res = await db.challenges.insert_one(doc)
-    return {"status": "pending", "challenge_id": str(res.inserted_id)}
+    return {
+        "status": "pending",
+        "challenge_id": str(res.inserted_id),
+        "is_imported_pgn": is_imported,
+        "moves_count": moves_count,
+    }
 
 # Lists incoming pending challenges
 @friends_router.get("/challenges/incoming")
@@ -1173,6 +1350,9 @@ async def incoming_challenges(current_user: dict = Depends(get_current_user)):
             "increment_seconds": d.get("increment_seconds", 0),
             "color_preference": d.get("color_preference", "random"),
             "status": d.get("status", "pending"),
+            "is_imported_pgn": d.get("is_imported_pgn", False),
+            "moves_count": d.get("moves_count", 0),
+            "turn_color": d.get("turn_color"),
             "created_at": _as_utc(d.get("created_at")),
         }
         for d in docs
@@ -1196,6 +1376,9 @@ async def outgoing_challenges(current_user: dict = Depends(get_current_user)):
             "color_preference": d.get("color_preference", "random"),
             "status": d.get("status", "pending"),
             "game_id": d.get("game_id"),
+            "is_imported_pgn": d.get("is_imported_pgn", False),
+            "moves_count": d.get("moves_count", 0),
+            "turn_color": d.get("turn_color"),
             "created_at": _as_utc(d.get("created_at")),
         }
         for d in docs
@@ -1252,12 +1435,24 @@ async def accept_challenge(challenge_id: str, current_user: dict = Depends(get_c
         "time_control_seconds": tc_sec,
         "increment_seconds": doc.get("increment_seconds", 0),
     }
+    if doc.get("is_imported_pgn") and doc.get("moves"):
+        game_dict["fen"] = doc.get("fen")
+        game_dict["moves"] = doc.get("moves")
+
     res = await db.games.insert_one(game_dict)
+    game_id = str(res.inserted_id)
+    game_dict["_id"] = res.inserted_id
+
+    if doc.get("is_imported_pgn") and doc.get("moves"):
+        from realtime import GameState, _set_state
+        state = GameState(game_dict)
+        _set_state(game_id, state)
+
     await db.challenges.update_one(
         {"_id": oid},
-        {"$set": {"status": "accepted", "game_id": str(res.inserted_id)}},
+        {"$set": {"status": "accepted", "game_id": game_id}},
     )
-    return {"status": "accepted", "game_id": str(res.inserted_id)}
+    return {"status": "accepted", "game_id": game_id}
 
 # Declines incoming challenge
 @friends_router.post("/challenges/{challenge_id}/decline")

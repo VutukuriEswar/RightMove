@@ -108,12 +108,60 @@ export default function GameRoom() {
   const pgnImportMovesRef = useRef(null);
   const [replayingPgn, setReplayingPgn] = useState(false);
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showReadyModal, setShowReadyModal] = useState(false);
   const [playersReady, setPlayersReady] = useState(false);
   const [showGameOver, setShowGameOver] = useState(false);
   const [passPlayResignColor, setPassPlayResignColor] = useState(null);
   const [rematching, setRematching] = useState(false);
   const [pausing, setPausing] = useState(false);
+  const [importedPgn, setImportedPgn] = useState(false);
+  const [importingPgn, setImportingPgn] = useState(false);
+  const pgnFileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sidebarOpen]);
+
+  const handleTriggerPgnImport = () => {
+    const curMoves = useGameStore.getState().moves;
+    const curResult = useGameStore.getState().result;
+    if (curMoves.length > 0 || importedPgn || curResult !== null || importingPgn) return;
+    pgnFileInputRef.current?.click();
+  };
+
+  const handlePgnFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const curMoves = useGameStore.getState().moves;
+    const curResult = useGameStore.getState().result;
+    if (curMoves.length > 0 || importedPgn || curResult !== null) return;
+
+    setImportingPgn(true);
+    try {
+      const text = await file.text();
+      const res = await gamesApi.importPgn(id, text);
+      setImportedPgn(true);
+      if (res.moves && res.fen) {
+        useGameStore.setState({
+          moves: res.moves,
+          fen: res.fen,
+          ...(res.player_color ? { playerColor: res.player_color } : {}),
+          serverError: null,
+        });
+      }
+    } catch (err) {
+      useGameStore.setState({ serverError: err.message || 'Failed to import PGN' });
+    } finally {
+      setImportingPgn(false);
+    }
+  };
 
   const handlePause = useCallback(async () => {
     if (pausing) return;
@@ -180,6 +228,13 @@ export default function GameRoom() {
       setShowReadyModal(false);
     }
   }, [bothReady, playersReady]);
+
+  useEffect(() => {
+    useGameStore.getState().setGameBegun(playersReady);
+    return () => {
+      useGameStore.getState().setGameBegun(false);
+    };
+  }, [playersReady]);
 
   const pgnReplayStartedRef = useRef(false);
   useEffect(() => {
@@ -622,6 +677,203 @@ export default function GameRoom() {
     document.body
   );
 
+  const drawerPortal = sidebarOpen && createPortal(
+    <div className="game-drawer-overlay" onClick={() => setSidebarOpen(false)}>
+      <div
+        className="game-drawer"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Game Menu & Analysis"
+      >
+        <div className="game-drawer-header">
+          <div className="game-drawer-title">
+            <span className="game-drawer-icon">♞</span>
+            <span>RightMove</span>
+          </div>
+          <button
+            className="game-drawer-close interactive"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="game-drawer-body">
+          <PlaySidebar
+            fen={fen}
+            onBotFirst={sendBotFirstMove}
+            onTakeback={sendTakeback}
+            onRedo={sendRedo}
+          />
+
+          <div className="game-drawer-nav">
+            <button
+              className="btn-neon interactive"
+              onClick={() => {
+                setSidebarOpen(false);
+                navigate('/lobby');
+              }}
+            >
+              🏠 Lobby
+            </button>
+            <button
+              className="btn-neon interactive"
+              onClick={() => {
+                setSidebarOpen(false);
+                navigate('/friends');
+              }}
+            >
+              👥 Friends
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+
+  const renderControlsContent = () => (
+    gameActive ? (
+      isPassAndPlay ? (
+        <div className="action-buttons" style={{ flexDirection: 'column', gap: '8px' }}>
+          <div style={{ position: 'relative' }}>
+            <button
+              className="btn-neon interactive"
+              style={{
+                width: '100%',
+                background: 'transparent',
+                color: activeColor === 'white' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.35)',
+                borderColor: activeColor === 'white' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.25)',
+                cursor: activeColor === 'white' ? 'pointer' : 'not-allowed',
+              }}
+              disabled={activeColor !== 'white'}
+              onClick={() => setPassPlayResignColor(passPlayResignColor === 'white' ? null : 'white')}
+            >♔ White Resign</button>
+            {passPlayResignColor === 'white' && (
+              <div style={{
+                position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0,
+                background: 'var(--royal-parchment, #1a1208)', border: '1px solid var(--royal-crimson, #8B2500)',
+                borderRadius: '8px', padding: '10px', zIndex: 50, textAlign: 'center',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+              }}>
+                <p style={{ fontSize: '0.8rem', marginBottom: '8px', color: 'var(--royal-ink, #f0e6c8)' }}>White really wants to resign?</p>
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                  <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'var(--royal-crimson)', color: '#fff', borderColor: 'var(--royal-crimson)' }}
+                    onClick={() => { setPassPlayResignColor(null); sendResign('white'); useGameStore.getState().setResult('black'); }}
+                  >Yes, Resign</button>
+                  <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'transparent' }}
+                    onClick={() => setPassPlayResignColor(null)}
+                  >Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ position: 'relative' }}>
+            <button
+              className="btn-neon interactive"
+              style={{
+                width: '100%',
+                background: 'transparent',
+                color: activeColor === 'black' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.35)',
+                borderColor: activeColor === 'black' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.25)',
+                cursor: activeColor === 'black' ? 'pointer' : 'not-allowed',
+              }}
+              disabled={activeColor !== 'black'}
+              onClick={() => setPassPlayResignColor(passPlayResignColor === 'black' ? null : 'black')}
+            >♚ Black Resign</button>
+            {passPlayResignColor === 'black' && (
+              <div style={{
+                position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0,
+                background: 'var(--royal-parchment, #1a1208)', border: '1px solid var(--royal-crimson, #8B2500)',
+                borderRadius: '8px', padding: '10px', zIndex: 50, textAlign: 'center',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+              }}>
+                <p style={{ fontSize: '0.8rem', marginBottom: '8px', color: 'var(--royal-ink, #f0e6c8)' }}>Black really wants to resign?</p>
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                  <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'var(--royal-crimson)', color: '#fff', borderColor: 'var(--royal-crimson)' }}
+                    onClick={() => { setPassPlayResignColor(null); sendResign('black'); useGameStore.getState().setResult('white'); }}
+                  >Yes, Resign</button>
+                  <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'transparent' }}
+                    onClick={() => setPassPlayResignColor(null)}
+                  >Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="action-buttons">
+          <button
+            className="btn-neon interactive"
+            style={{ background: 'transparent', color: 'var(--royal-crimson, #8B2500)', borderColor: 'var(--royal-crimson, #8B2500)', opacity: !isPlayerTurn ? 0.45 : 1 }}
+            disabled={!isPlayerTurn}
+            title={!isPlayerTurn ? 'You can only resign on your turn' : 'Resign the game'}
+            onClick={resignAndClose}
+          >Resign</button>
+          <div style={{ position: 'relative' }}>
+            <button
+              className="btn-neon interactive"
+              style={{ background: 'transparent', color: 'var(--royal-brass, #A67C52)', borderColor: 'var(--royal-brass, #A67C52)', opacity: (drawOfferSent || drawCooling) ? 0.6 : (!isPlayerTurn ? 0.45 : 1) }}
+              onClick={(drawOfferSent || drawCooling) ? undefined : sendDrawOffer}
+              disabled={drawOfferSent || drawCooling || !isPlayerTurn}
+              title={drawOfferSent ? 'Waiting for opponent to accept…' : drawCooling ? 'Offer a draw again in a few seconds' : !isPlayerTurn ? 'You can only offer a draw on your turn' : 'Offer a draw'}
+            >{drawOfferSent ? '🤝 Waiting…' : 'Offer Draw'}</button>
+            {drawDeclinedMsg && (
+              <div style={{
+                position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
+                background: '#1a1208', border: '1px solid var(--royal-crimson)', borderRadius: '6px',
+                padding: '6px 12px', fontSize: '0.75rem', whiteSpace: 'normal', maxWidth: '90vw', textAlign: 'center', zIndex: 50,
+                color: 'var(--royal-crimson)',
+              }}>{drawDeclinedMsg}</div>
+            )}
+          </div>
+          {isEngineGame && (
+            <>
+              <button
+                className="btn-neon interactive"
+                style={{
+                  width: '100%',
+                  marginTop: '8px',
+                  background: 'transparent',
+                  color: 'var(--royal-gold, #D4AF37)',
+                  borderColor: 'var(--royal-gold, #D4AF37)',
+                  opacity: (moves.length > 0 || importedPgn || !gameActive) ? 0.4 : 1,
+                  cursor: (moves.length > 0 || importedPgn || !gameActive) ? 'not-allowed' : 'pointer'
+                }}
+                disabled={moves.length > 0 || importedPgn || !gameActive || importingPgn}
+                title={(moves.length > 0 || importedPgn) ? 'Cannot import PGN while a game is already in progress' : 'Import PGN to continue from a position'}
+                onClick={handleTriggerPgnImport}
+              >{importingPgn ? 'Importing PGN...' : '📥 Import PGN'}</button>
+              <input
+                ref={pgnFileInputRef}
+                type="file"
+                accept=".pgn"
+                style={{ display: 'none' }}
+                onChange={handlePgnFileChange}
+              />
+              <button
+                className="btn-neon interactive"
+                style={{ width: '100%', marginTop: '8px', background: 'transparent', color: 'var(--royal-gold, #D4AF37)', borderColor: 'var(--royal-gold, #D4AF37)' }}
+                disabled={pausing}
+                title="Pause and continue later"
+                onClick={handlePause}
+              >{pausing ? 'Pausing...' : '⏸ Pause'}</button>
+            </>
+          )}
+        </div>
+      )
+    ) : (
+      <div className="game-over-banner">
+        <h3>Game Over: {result}</h3>
+        <button className="btn-neon interactive" onClick={() => navigate(`/review/${id}`)}>
+          Review Game
+        </button>
+      </div>
+    )
+  );
+
   return (
     <>
 
@@ -632,26 +884,34 @@ export default function GameRoom() {
       {resumeModalPortal}
       {drawModalPortal}
       {gameOverModalPortal}
+      {drawerPortal}
 
       <div aria-live="polite" className="sr-only">
         {gameActive && playersReady ? `${activeColor === 'white' ? 'White' : 'Black'} to move` : ''}
       </div>
 
       <motion.div
-        className="game-room"
+        className={`game-room${playersReady ? ' game-room-active' : ''}`}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div className="game-layout">
+        {playersReady && (
+          <div className="game-top-bar">
+            <button
+              className="game-menu-btn interactive"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open menu"
+              title="Menu: Win chances, Setup, Parameters"
+            >
+              ☰
+            </button>
+          </div>
+        )}
 
-          {isEngineGame && (
-            <div className="game-leftbar">
-              <PlaySidebar fen={fen} onBotFirst={sendBotFirstMove} onTakeback={sendTakeback} onRedo={sendRedo} />
-            </div>
-          )}
+        <div className={`game-layout${trainingMode ? ' coach-game-layout' : ''}`}>
 
-          <div className="game-board-area">
+          <div className={`game-board-area${trainingMode ? ' coach-board-area' : ''}`}>
             <div
               className={`board-column${isPassAndPlay && isFlipping && boardStyle === '2d' ? ' board-flip-anim' : ''}`}
             >
@@ -743,129 +1003,36 @@ export default function GameRoom() {
                 </div>
               </div>
 
+              {trainingMode && (
+                <div className="coach-board-extras">
+                  <div className="game-controls coach-game-controls">
+                    {renderControlsContent()}
+                  </div>
+                  <div className="move-list-container coach-move-list">
+                    <div className="coach-move-list-header">
+                      <span>♟ Game Notation</span>
+                      <span className="coach-move-count mono">{moves.length} ply</span>
+                    </div>
+                    <MoveList moves={moves} />
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
 
-          <div className="game-sidebar">
-            <div className="move-list-container">
-              <MoveList moves={moves} />
-            </div>
-
-            <div className="game-controls">
-              {gameActive ? (
-                isPassAndPlay ? (
-                  <div className="action-buttons" style={{ flexDirection: 'column', gap: '8px' }}>
-                    <div style={{ position: 'relative' }}>
-                      <button
-                        className="btn-neon interactive"
-                        style={{
-                          width: '100%',
-                          background: 'transparent',
-                          color: activeColor === 'white' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.35)',
-                          borderColor: activeColor === 'white' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.25)',
-                          cursor: activeColor === 'white' ? 'pointer' : 'not-allowed',
-                        }}
-                        disabled={activeColor !== 'white'}
-                        onClick={() => setPassPlayResignColor(passPlayResignColor === 'white' ? null : 'white')}
-                      >♔ White Resign</button>
-                      {passPlayResignColor === 'white' && (
-                        <div style={{
-                          position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0,
-                          background: 'var(--royal-parchment, #1a1208)', border: '1px solid var(--royal-crimson, #8B2500)',
-                          borderRadius: '8px', padding: '10px', zIndex: 50, textAlign: 'center',
-                          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
-                        }}>
-                          <p style={{ fontSize: '0.8rem', marginBottom: '8px', color: 'var(--royal-ink, #f0e6c8)' }}>White really wants to resign?</p>
-                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                            <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'var(--royal-crimson)', color: '#fff', borderColor: 'var(--royal-crimson)' }}
-                              onClick={() => { setPassPlayResignColor(null); sendResign('white'); useGameStore.getState().setResult('black'); }}
-                            >Yes, Resign</button>
-                            <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'transparent' }}
-                              onClick={() => setPassPlayResignColor(null)}
-                            >Cancel</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ position: 'relative' }}>
-                      <button
-                        className="btn-neon interactive"
-                        style={{
-                          width: '100%',
-                          background: 'transparent',
-                          color: activeColor === 'black' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.35)',
-                          borderColor: activeColor === 'black' ? 'var(--royal-crimson, #8B2500)' : 'rgba(139,37,0,0.25)',
-                          cursor: activeColor === 'black' ? 'pointer' : 'not-allowed',
-                        }}
-                        disabled={activeColor !== 'black'}
-                        onClick={() => setPassPlayResignColor(passPlayResignColor === 'black' ? null : 'black')}
-                      >♚ Black Resign</button>
-                      {passPlayResignColor === 'black' && (
-                        <div style={{
-                          position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0,
-                          background: 'var(--royal-parchment, #1a1208)', border: '1px solid var(--royal-crimson, #8B2500)',
-                          borderRadius: '8px', padding: '10px', zIndex: 50, textAlign: 'center',
-                          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
-                        }}>
-                          <p style={{ fontSize: '0.8rem', marginBottom: '8px', color: 'var(--royal-ink, #f0e6c8)' }}>Black really wants to resign?</p>
-                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                            <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'var(--royal-crimson)', color: '#fff', borderColor: 'var(--royal-crimson)' }}
-                              onClick={() => { setPassPlayResignColor(null); sendResign('black'); useGameStore.getState().setResult('white'); }}
-                            >Yes, Resign</button>
-                            <button className="btn-neon interactive" style={{ fontSize: '0.75rem', padding: '5px 12px', background: 'transparent' }}
-                              onClick={() => setPassPlayResignColor(null)}
-                            >Cancel</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="action-buttons">
-                    <button
-                      className="btn-neon interactive"
-                      style={{ background: 'transparent', color: 'var(--royal-crimson, #8B2500)', borderColor: 'var(--royal-crimson, #8B2500)', opacity: !isPlayerTurn ? 0.45 : 1 }}
-                      disabled={!isPlayerTurn}
-                      title={!isPlayerTurn ? 'You can only resign on your turn' : 'Resign the game'}
-                      onClick={resignAndClose}
-                    >Resign</button>
-                    <div style={{ position: 'relative' }}>
-                      <button
-                        className="btn-neon interactive"
-                        style={{ background: 'transparent', color: 'var(--royal-brass, #A67C52)', borderColor: 'var(--royal-brass, #A67C52)', opacity: (drawOfferSent || drawCooling) ? 0.6 : (!isPlayerTurn ? 0.45 : 1) }}
-                        onClick={(drawOfferSent || drawCooling) ? undefined : sendDrawOffer}
-                        disabled={drawOfferSent || drawCooling || !isPlayerTurn}
-                        title={drawOfferSent ? 'Waiting for opponent to accept…' : drawCooling ? 'Offer a draw again in a few seconds' : !isPlayerTurn ? 'You can only offer a draw on your turn' : 'Offer a draw'}
-                      >{drawOfferSent ? '🤝 Waiting…' : 'Offer Draw'}</button>
-                      {drawDeclinedMsg && (
-                        <div style={{
-                          position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
-                          background: '#1a1208', border: '1px solid var(--royal-crimson)', borderRadius: '6px',
-                          padding: '6px 12px', fontSize: '0.75rem', whiteSpace: 'normal', maxWidth: '90vw', textAlign: 'center', zIndex: 50,
-                          color: 'var(--royal-crimson)',
-                        }}>{drawDeclinedMsg}</div>
-                      )}
-                    </div>
-                    {isEngineGame && (
-                      <button
-                        className="btn-neon interactive"
-                        style={{ width: '100%', marginTop: '8px', background: 'transparent', color: 'var(--royal-gold, #D4AF37)', borderColor: 'var(--royal-gold, #D4AF37)' }}
-                        disabled={pausing}
-                        title="Pause and continue later"
-                        onClick={handlePause}
-                      >{pausing ? 'Pausing...' : '⏸ Pause'}</button>
-                    )}
-                  </div>
-                )
-              ) : (
-                <div className="game-over-banner">
-                  <h3>Game Over: {result}</h3>
-                  <button className="btn-neon interactive" onClick={() => navigate(`/review/${id}`)}>
-                    Review Game
-                  </button>
+          <div className={`game-sidebar${trainingMode ? ' coach-game-sidebar' : ''}`}>
+            {!trainingMode && (
+              <>
+                <div className="move-list-container">
+                  <MoveList moves={moves} />
                 </div>
-              )}
-            </div>
+
+                <div className="game-controls">
+                  {renderControlsContent()}
+                </div>
+              </>
+            )}
 
             {trainingMode && (
               <CoachPanel

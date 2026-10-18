@@ -157,6 +157,23 @@ export default function Friends() {
     }
   };
 
+  const handleChallengePgn = async (username, pgnText, tc = 0, inc = 0, color = 'random') => {
+    setError(null);
+    setSuccess(null);
+    setBusyUser(username);
+    try {
+      const res = await friendsApi.challenge(username, tc, inc, color, pgnText);
+      if (res?.challenge_id) sentChallengeIds.current.add(res.challenge_id);
+      const movesStr = res?.moves_count ? ` (${res.moves_count} moves)` : '';
+      setSuccess(`Resume challenge sent to ${username}${movesStr}! Waiting for them to accept.`);
+      loadInbox();
+    } catch (err) {
+      setError(err.message || 'Failed to send PGN challenge');
+    } finally {
+      setBusyUser(null);
+    }
+  };
+
   const handleAcceptChallenge = async (c) => {
     setBusyChallenge(c.id);
     setError(null);
@@ -321,9 +338,9 @@ export default function Friends() {
           <div className="banner-left">
             <span className="banner-icon">⚔️</span>
             <div className="banner-text">
-              <strong>Match Challenge Received!</strong>
+              <strong>{challengesIn[0].is_imported_pgn ? '📥 Resume Game Challenge Received!' : 'Match Challenge Received!'}</strong>
               <span>
-                {challengesIn[0].from_username} has challenged you ({tcLabel(challengesIn[0].time_control_seconds, challengesIn[0].increment_seconds)})
+                {challengesIn[0].from_username} has challenged you {challengesIn[0].is_imported_pgn ? `to resume an imported game (${challengesIn[0].moves_count || 0} moves · ${tcLabel(challengesIn[0].time_control_seconds, challengesIn[0].increment_seconds)})` : `(${tcLabel(challengesIn[0].time_control_seconds, challengesIn[0].increment_seconds)})`}
               </span>
             </div>
           </div>
@@ -333,7 +350,7 @@ export default function Friends() {
               disabled={busyChallenge === challengesIn[0].id}
               onClick={() => handleAcceptChallenge(challengesIn[0])}
             >
-              Accept & Play
+              {challengesIn[0].is_imported_pgn ? 'Accept & Resume' : 'Accept & Play'}
             </button>
             <button
               className="btn btn-secondary btn-sm interactive"
@@ -397,6 +414,7 @@ export default function Friends() {
                   busy={busyUser === f.username}
                   waiting={!!outByUser[f.username]}
                   onChallenge={handleChallenge}
+                  onChallengePgn={handleChallengePgn}
                   onRemove={handleRemove}
                 />
               </div>
@@ -445,7 +463,7 @@ export default function Friends() {
                     <div className="request-info">
                       <span className="request-name">{c.from_username}</span>
                       <span className="challenge-tc-meta">
-                        {tcLabel(c.time_control_seconds, c.increment_seconds)}
+                        {c.is_imported_pgn ? `📥 Resume (${c.moves_count || 0} moves)` : tcLabel(c.time_control_seconds, c.increment_seconds)}
                       </span>
                     </div>
                     <div className="challenge-btns">
@@ -454,7 +472,7 @@ export default function Friends() {
                         disabled={busyChallenge === c.id}
                         onClick={() => handleAcceptChallenge(c)}
                       >
-                        Play
+                        {c.is_imported_pgn ? 'Resume' : 'Play'}
                       </button>
                       <button
                         className="btn btn-secondary btn-sm interactive"
@@ -471,7 +489,7 @@ export default function Friends() {
                     <div className="request-info">
                       <span className="request-name">⏳ {c.to_username}</span>
                       <span className="challenge-tc-meta">
-                        {tcLabel(c.time_control_seconds, c.increment_seconds)}
+                        {c.is_imported_pgn ? `📥 Resume (${c.moves_count || 0} moves)` : tcLabel(c.time_control_seconds, c.increment_seconds)}
                       </span>
                     </div>
                     <button

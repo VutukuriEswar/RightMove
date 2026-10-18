@@ -62,6 +62,7 @@ export function useGameSocket(gameId) {
               ...(msg.payload.bot_engine ? { botEngine: msg.payload.bot_engine } : {}),
               ...(msg.payload.bot_depth ? { botDepth: msg.payload.bot_depth } : {}),
               ...(msg.payload.maia_elo ? { maiaElo: msg.payload.maia_elo } : {}),
+              ...(msg.payload.player_color ? { playerColor: msg.payload.player_color } : {}),
             });
           }
           break;

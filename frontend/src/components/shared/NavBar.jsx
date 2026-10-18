@@ -18,6 +18,7 @@ export function NavBar() {
   const location = useLocation();
   const liveGameId = useGameStore((s) => s.gameId);
   const liveGameResult = useGameStore((s) => s.result);
+  const gameBegun = useGameStore((s) => s.gameBegun);
   const openLeaveDialog = useLeaveGameStore((s) => s.openLeaveDialog);
   const closeLeaveDialog = useLeaveGameStore((s) => s.closeLeaveDialog);
   const setLeaving = useLeaveGameStore((s) => s.setLeaving);
@@ -26,10 +27,12 @@ export function NavBar() {
   const friendTotal = (friend_requests || 0) + (challenge_requests || 0);
   const trainingNew = useTrainingBadge(user?.role === 'admin');
 
+  const inLiveGame = location.pathname.startsWith('/game/') && gameBegun;
+
   const handleLogout = () => {
-    const inLiveGame =
+    const inActiveGame =
       location.pathname.startsWith('/game/') && !!liveGameId && liveGameResult === null;
-    if (inLiveGame && hasActiveGameResigner()) {
+    if (inActiveGame && hasActiveGameResigner()) {
       openLeaveDialog({
         onConfirm: () => {
           setLeaving(true);
@@ -45,6 +48,10 @@ export function NavBar() {
     logout();
     navigate('/login');
   };
+
+  if (inLiveGame) {
+    return null;
+  }
 
   return (
     <motion.nav

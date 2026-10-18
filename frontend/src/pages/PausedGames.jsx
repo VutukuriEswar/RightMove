@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { gamesApi } from '../lib/api';
@@ -21,6 +21,8 @@ export default function PausedGames() {
   const [busyId, setBusyId] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
   const [starting, setStarting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef(null);
 
   const reload = useCallback(async () => {
     try {
@@ -80,6 +82,22 @@ export default function PausedGames() {
     }
   };
 
+  const handleImportPgn = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setImporting(true);
+    setError(null);
+    try {
+      const text = await file.text();
+      const res = await gamesApi.createFromPgn(text);
+      navigate(`/game/${res.id}`);
+    } catch (err) {
+      setError(err.message || 'Failed to import PGN');
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="history-page page">
       <div className="history-header">
@@ -91,9 +109,26 @@ export default function PausedGames() {
       {loading && <div className="spinner-large" />}
 
       {!loading && (
-        <button className="btn btn-primary" style={{ marginBottom: '16px' }} disabled={starting} onClick={handleNewGame}>
-          {starting ? 'Starting...' : '+ Start new game'}
-        </button>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" disabled={starting || importing} onClick={handleNewGame}>
+            {starting ? 'Starting...' : '+ Start new game'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            disabled={starting || importing}
+            onClick={() => fileInputRef.current?.click()}
+            title="Import a PGN file to continue in coach mode"
+          >
+            {importing ? 'Importing...' : '📥 Import PGN'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pgn"
+            style={{ display: 'none' }}
+            onChange={handleImportPgn}
+          />
+        </div>
       )}
 
       {!loading && games.length === 0 && (
