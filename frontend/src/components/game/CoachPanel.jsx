@@ -5,7 +5,7 @@ import { coachApi } from '../../lib/api';
 import { buildPositions, formatEval, CLASSIFICATION_META, uciToSquares } from '../../lib/chessUtils';
 import CandidateLab from './CandidateLab';
 
-export default function CoachPanel({ onPlayMove }) {
+export default function CoachPanel({ onPlayMove, onActiveChange }) {
   const navigate = useNavigate();
   const gameId      = useGameStore(s => s.gameId);
   const fen       = useGameStore(s => s.fen);
@@ -128,6 +128,7 @@ export default function CoachPanel({ onPlayMove }) {
         canPlay={canPlayMove}
         canGenerate={canGenerateMove}
         onPlayMove={onPlayMove}
+        onActiveChange={onActiveChange}
       />
 
       {result && (

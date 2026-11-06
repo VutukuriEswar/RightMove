@@ -211,6 +211,7 @@ export default function GameRoom() {
 
   const FLIP_DURATION = 700;
   const [isFlipping, setIsFlipping] = useState(false);
+  const [labActive, setLabActive] = useState(false);
   const prevActiveColorRef = useRef(null);
   const flipTimerRef = useRef(null);
 
@@ -804,7 +805,7 @@ export default function GameRoom() {
           </div>
         </div>
       ) : (
-        <div className="action-buttons">
+        <div className={`action-buttons${trainingMode ? ' coach-control-grid' : ''}`}>
           <button
             className="btn-neon interactive"
             style={{ background: 'transparent', color: 'var(--royal-crimson, #8B2500)', borderColor: 'var(--royal-crimson, #8B2500)', opacity: !isPlayerTurn ? 0.45 : 1 }}
@@ -891,13 +892,13 @@ export default function GameRoom() {
       </div>
 
       <motion.div
-        className={`game-room${playersReady ? ' game-room-active' : ''}`}
+        className={`game-room${playersReady ? ' game-room-active' : ''}${trainingMode ? ' coach-mode' : ''}`}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
         {playersReady && (
-          <div className="game-top-bar">
+          <div className={`game-top-bar${trainingMode ? ' coach-top-bar' : ''}`}>
             <button
               className="game-menu-btn interactive"
               onClick={() => setSidebarOpen(true)}
@@ -906,6 +907,17 @@ export default function GameRoom() {
             >
               ☰
             </button>
+            {trainingMode && (
+              <>
+                <div className="coach-topbar-title">
+                  <span className="coach-topbar-crest" aria-hidden="true">♞</span>
+                  <div>
+                    <span className="coach-topbar-eyebrow">Training workspace</span>
+                    <h1>Coach Mode</h1>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -920,7 +932,12 @@ export default function GameRoom() {
                 <div className="player-info-left">
                   <div className="player-avatar">{theirLabel.charAt(0).toUpperCase()}</div>
                   <span className="player-name">{theirLabel}</span>
-                  {topIsActive && <span className="turn-badge"><span className="turn-dot" />TO MOVE</span>}
+                  {topIsActive && (
+                    <span className={`turn-badge${trainingMode && !isPassAndPlay ? ' thinking-badge' : ''}`}>
+                      <span className="turn-dot" />
+                      {trainingMode && !isPassAndPlay ? 'Opponent thinking' : 'TO MOVE'}
+                    </span>
+                  )}
                 </div>
                 <div className="player-info-right">
                   {!isPassAndPlay && !isEngineGame && opponentUsername && !isFriend && (
@@ -1008,13 +1025,6 @@ export default function GameRoom() {
                   <div className="game-controls coach-game-controls">
                     {renderControlsContent()}
                   </div>
-                  <div className="move-list-container coach-move-list">
-                    <div className="coach-move-list-header">
-                      <span>♟ Game Notation</span>
-                      <span className="coach-move-count mono">{moves.length} ply</span>
-                    </div>
-                    <MoveList moves={moves} />
-                  </div>
                 </div>
               )}
 
@@ -1035,9 +1045,21 @@ export default function GameRoom() {
             )}
 
             {trainingMode && (
-              <CoachPanel
-                onPlayMove={handleMove}
-              />
+              <>
+                <CoachPanel
+                  onPlayMove={handleMove}
+                  onActiveChange={setLabActive}
+                />
+                {!labActive && (
+                  <div className="move-list-container coach-move-list coach-notation-sidebar">
+                    <div className="coach-move-list-header">
+                      <span>♟ Game Notation</span>
+                      <span className="coach-move-count mono">{moves.length} ply</span>
+                    </div>
+                    <MoveList moves={moves} />
+                  </div>
+                )}
+              </>
             )}
           </div>
 

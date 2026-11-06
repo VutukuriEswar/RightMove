@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, Fragment, Component } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment, Component } from 'react';
 import Board2D from '../board/Board2D';
 import { coachApi } from '../../lib/api';
 
@@ -59,7 +59,22 @@ function plainNote(text) {
   return String(text || '').replace(/\*\*/g, '');
 }
 
-export default function CandidateLab({ fen, playerColor = 'white', canPlay = false, canGenerate = true, onPlayMove }) {
+function qualityTone(quality) {
+  const q = String(quality || '').toLowerCase();
+  if (q.includes('best') || q.includes('excellent') || q.includes('brilliant')) return 'best';
+  if (q.includes('good') || q.includes('solid') || q.includes('great')) return 'good';
+  if (q.includes('inacc') || q.includes('mistake') || q.includes('blunder') || q.includes('dubious')) return 'poor';
+  return 'neutral';
+}
+
+function userWinPct(c, userIsWhite) {
+  const raw = userIsWhite ? c.win_prob : 1 - c.win_prob;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return 50;
+  return Math.min(100, Math.max(0, Math.round(value * 100)));
+}
+
+export default function CandidateLab({ fen, playerColor = 'white', canPlay = false, canGenerate = true, onPlayMove, onActiveChange }) {
   const userIsWhite = String(playerColor).toLowerCase() !== 'black';
 
   const [count, setCount] = useState(10);
@@ -82,6 +97,10 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
   const [chain, setChain] = useState(null);
   const [chainOrigin, setChainOrigin] = useState(null);
   const [labView, setLabView] = useState('candidates');
+
+  useEffect(() => {
+    onActiveChange?.(busy || candidates.length > 0);
+  }, [busy, candidates.length, onActiveChange]);
 
   const stale = !!baseFen && !!fen && baseFen !== fen;
   const selected = useMemo(
@@ -209,10 +228,12 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
     <>
       {candidates.length > 0 ? (
         <div className="lab-studio-inline">
+          {busy && <div className="lab-shell-progress" aria-hidden="true" />}
           <div className="lab-header">
             <div className="lab-title">
               <span className="lab-crest">🔬</span>
               <div>
+                <span className="lab-eyebrow">Coach mode · Engine analysis</span>
                 <h2>Candidate Lab</h2>
                 <p>
                   {candidates.length} moves evaluated at depth {CANDIDATE_DEPTH}
@@ -495,14 +516,15 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                     {candidates.map((c) => (
                       <button
                         key={c.move_uci}
-                        className="lab-card interactive"
+                        className={`lab-card interactive${c.rank === 1 ? ' is-top' : ''}`}
+                        data-rank={c.rank}
                         onClick={() => selectCandidate(c)}
                         aria-label={`Candidate ${c.rank}: ${c.move_san}`}
                       >
                         <div className="lab-card-rank">
                           <span className="lab-medal">{RANK_MEDALS[c.rank - 1] || `#${c.rank}`}</span>
                           <span className="lab-san">{c.move_san}</span>
-                          <span className="lab-quality">{c.quality}</span>
+                          <span className={`lab-quality tone-${qualityTone(c.quality)}`}>{c.quality}</span>
                         </div>
                         <div className="lab-board">
                           <Board2D
@@ -516,12 +538,15 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                           />
                         </div>
                         <div className="lab-card-meta">
-                          <span className="mono">{fmtUserScore(c, userIsWhite)}</span>
-                          <span className="mono">{fmtUserWin(c, userIsWhite)}</span>
+                          <span className="lab-eval-chip mono">{fmtUserScore(c, userIsWhite)}</span>
+                          <span className="lab-win-chip mono">{fmtUserWin(c, userIsWhite)}</span>
                           <span className="lab-delta">
                             {c.rank === 1 ? 'engine top' : `−${((c.cp_delta || 0) / 100).toFixed(2)} vs #1`}
                           </span>
                         </div>
+                        <span className="lab-eval-track" aria-hidden="true">
+                          <span style={{ width: `${userWinPct(c, userIsWhite)}%` }} />
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -531,39 +556,93 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
           </LabViewBoundary>
         </div>
       ) : (
-        <div className="coach-card card lab-entry">
-          <h4 className="coach-card-title">🔬 Candidate Lab</h4>
-          <p className="lab-entry-sub">Deep engine evaluation: rank candidate moves and analyze tactical nuances.</p>
+        <div className="lab-studio-inline lab-studio-empty">
+          {busy && <div className="lab-shell-progress" aria-hidden="true" />}
+          <div className="lab-empty-shell">
+            <header className="lab-empty-header">
+              <div className="lab-title">
+                <span className="lab-crest">🔬</span>
+                <div>
+                  <span className="lab-eyebrow">Coach mode · Engine analysis</span>
+                  <h2>Candidate Lab</h2>
+                  <p>Rank your options before you commit to a move.</p>
+                </div>
+              </div>
+            </header>
 
-          <label className="sim-slider">
-            <span>Candidate moves to evaluate</span>
-            <input type="range" min="1" max={MAX_COUNT} value={count}
-              style={rangeFill(count, 1, MAX_COUNT)}
-              onChange={(e) => setCount(+e.target.value)} />
-            <em>{count}</em>
-          </label>
+            <div className="lab-empty-body">
+              <div className="lab-empty-hero">
+                <div>
+                  <span className="lab-kicker">Position analysis</span>
+                  <h3>What is the strongest move here?</h3>
+                  <p>Generate a ranked shortlist, study the trade-offs, then commit with confidence.</p>
+                </div>
+                <span className="lab-empty-hero-mark" aria-hidden="true">♞</span>
+              </div>
 
-          <button
-            className="btn-neon interactive coach-action-btn sim-run"
-            disabled={busy || !fen || !canGenerate}
-            title={!canGenerate ? 'Available on your turn — ranks your moves only' : undefined}
-            onClick={generate}
-          >
-            {busy ? '⏳ Evaluating Candidate Moves…' : '🔬 Generate Candidates'}
-          </button>
-          {!canGenerate && (
-            <p className="lab-entry-sub" style={{ marginTop: '6px' }}>Available on your turn — it ranks moves for your side only.</p>
-          )}
-          {busy && (
-            <div className="lab-generating-badge">
-              <span>⏳ Stockfish depth {CANDIDATE_DEPTH} analysis in progress…</span>
+              <section className="lab-setup-card">
+                <span className="lab-kicker">Configure analysis</span>
+                <h3>Build your candidate list</h3>
+                <p className="lab-setup-copy">
+                  Stockfish examines the position and surfaces the strongest continuations,
+                  ranked by evaluation and tactical soundness.
+                </p>
+
+                <div className="lab-count-control">
+                  <div className="lab-count-head">
+                    <label htmlFor="candidate-count">Candidate moves</label>
+                    <span className="lab-count-value">
+                      {count}<small>lines</small>
+                    </span>
+                  </div>
+                  <input
+                    id="candidate-count"
+                    type="range"
+                    min="1"
+                    max={MAX_COUNT}
+                    value={count}
+                    style={rangeFill(count, 1, MAX_COUNT)}
+                    onChange={(e) => setCount(+e.target.value)}
+                  />
+                  <div className="lab-count-scale" aria-hidden="true">
+                    <span>1</span>
+                    <span>{MAX_COUNT}</span>
+                  </div>
+                </div>
+
+                <div className="lab-run-meta">
+                  <span className="lab-depth-pill">Stockfish · depth {CANDIDATE_DEPTH}</span>
+                  <span>Usually 5–20 seconds</span>
+                </div>
+
+                <button
+                  className="lab-generate-btn interactive"
+                  disabled={busy || !fen || !canGenerate}
+                  title={!canGenerate ? 'Available on your turn — ranks your moves only' : undefined}
+                  onClick={generate}
+                >
+                  <span className="lab-generate-icon" aria-hidden="true">🔬</span>
+                  <span>{busy ? 'Evaluating position…' : 'Generate candidates'}</span>
+                  <span className="lab-generate-arrow" aria-hidden="true">→</span>
+                </button>
+
+                {!canGenerate && (
+                  <p className="lab-inline-note">Analysis is available on your turn — it ranks moves for your side only.</p>
+                )}
+                {busy && (
+                  <div className="lab-generating-badge" role="status">
+                    <span className="lab-status-dot" />
+                    <span>Stockfish depth {CANDIDATE_DEPTH} analysis in progress…</span>
+                  </div>
+                )}
+                {error && (
+                  <div className="alert alert-error" role="alert" style={{ fontSize: '0.75rem' }}>
+                    {error}
+                  </div>
+                )}
+              </section>
             </div>
-          )}
-          {error && (
-            <div className="alert alert-error" role="alert" style={{ marginTop: '8px', fontSize: '0.75rem' }}>
-              {error}
-            </div>
-          )}
+          </div>
         </div>
       )}
     </>

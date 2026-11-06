@@ -26,6 +26,13 @@
   --lab-mid:        #7A5C3A;
   --lab-dim:        rgba(90, 62, 37, 0.85);
   --lab-faint:      rgba(90, 62, 37, 0.62);
+
+  --coach-surface:        rgba(255, 252, 240, 0.58);
+  --coach-surface-strong: rgba(255, 252, 240, 0.86);
+  --coach-line:           rgba(166, 124, 82, 0.28);
+  --coach-muted:          rgba(90, 62, 37, 0.72);
+  --coach-shadow:         0 20px 52px rgba(90, 62, 37, 0.14);
+  --coach-glow:           rgba(212, 175, 55, 0.18);
 }
 
 html[data-theme="dark"] {
@@ -65,6 +72,13 @@ html[data-theme="dark"] {
   --lab-mid:        #c8ad7a;
   --lab-dim:        rgba(214, 190, 140, 0.85);
   --lab-faint:      rgba(214, 190, 140, 0.6);
+
+  --coach-surface:        rgba(20, 12, 4, 0.55);
+  --coach-surface-strong: rgba(27, 17, 7, 0.82);
+  --coach-line:           rgba(212, 175, 55, 0.18);
+  --coach-muted:          rgba(214, 190, 140, 0.68);
+  --coach-shadow:         0 24px 64px rgba(0, 0, 0, 0.48);
+  --coach-glow:           rgba(212, 175, 55, 0.13);
 }
 
 * {

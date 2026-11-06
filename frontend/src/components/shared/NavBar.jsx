@@ -18,7 +18,6 @@ export function NavBar() {
   const location = useLocation();
   const liveGameId = useGameStore((s) => s.gameId);
   const liveGameResult = useGameStore((s) => s.result);
-  const gameBegun = useGameStore((s) => s.gameBegun);
   const openLeaveDialog = useLeaveGameStore((s) => s.openLeaveDialog);
   const closeLeaveDialog = useLeaveGameStore((s) => s.closeLeaveDialog);
   const setLeaving = useLeaveGameStore((s) => s.setLeaving);
@@ -27,7 +26,7 @@ export function NavBar() {
   const friendTotal = (friend_requests || 0) + (challenge_requests || 0);
   const trainingNew = useTrainingBadge(user?.role === 'admin');
 
-  const inLiveGame = location.pathname.startsWith('/game/') && gameBegun;
+  const inLiveGame = location.pathname.startsWith('/game/');
 
   const handleLogout = () => {
     const inActiveGame =
