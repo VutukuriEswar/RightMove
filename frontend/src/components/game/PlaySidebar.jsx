@@ -4,7 +4,7 @@ import { gamesApi } from '../../lib/api';
 import WdlBar from './WdlBar';
 import ParametersPanel from './ParametersPanel';
 
-export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
+export default function PlaySidebar({ fen, onBotFirst, settingsLocked = false }) {
   const mode = useGameStore((s) => s.mode);
   const moves = useGameStore((s) => s.moves);
   const result = useGameStore((s) => s.result);
@@ -12,8 +12,6 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
   const botEngine = useGameStore((s) => s.botEngine);
   const botDepth = useGameStore((s) => s.botDepth);
   const maiaElo = useGameStore((s) => s.maiaElo);
-  const canTakeback = useGameStore((s) => s.canTakeback);
-  const canRedo = useGameStore((s) => s.canRedo);
   const gameId = useGameStore((s) => s.gameId);
   const flipBoard = useGameStore((s) => s.flipBoard);
 
@@ -28,6 +26,7 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
   const started = moves.length > 0;
   const isBotGame = mode === 'bot';
   const flipLocked = started || !!result;
+  const locked = started || !!settingsLocked || !!result;
   const userIsWhite = playerColor !== 'black';
   const botIsWhite = !userIsWhite;
 
@@ -62,7 +61,7 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
   };
 
   const handleEngine = async (engine) => {
-    if (!gameId || started || cfgBusy || engine === botEngine) return;
+    if (!gameId || locked || cfgBusy || engine === botEngine) return;
     setCfgBusy(true); setCfgError(null);
     try {
       const payload = engine === 'maia3'
@@ -82,7 +81,7 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
   };
 
   const handleDifficulty = async (value) => {
-    if (!gameId || started || cfgBusy) return;
+    if (!gameId || locked || cfgBusy) return;
     setCfgBusy(true); setCfgError(null);
     try {
       const payload = botEngine === 'maia3'
@@ -102,7 +101,7 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
   };
 
   const handleColor = async (color) => {
-    if (!gameId || started || cfgBusy || color === playerColor) return;
+    if (!gameId || locked || cfgBusy || color === playerColor) return;
     setSwapBusy(true); setSwapError(null);
     try {
       await gamesApi.chooseColor(gameId, color);
@@ -114,7 +113,7 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
     }
   };
 
-  const showBotFirst = isBotGame && botIsWhite && !started && !result;
+  const showBotFirst = isBotGame && botIsWhite && !locked && !result;
 
   return (
     <div className="play-sidebar">
@@ -154,7 +153,7 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
                   <strong style={{ textTransform: 'capitalize' }}>{mode?.replace(/_/g, ' ') || 'Match'}</strong>
                 </div>
               </div>
-            ) : !started ? (
+            ) : !locked ? (
               <div className="play-setup-edit">
                 <div className="play-setup-engines">
                   {[
@@ -214,7 +213,7 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
                 {(cfgError || swapError) && (
                   <p className="coach-text" style={{ color: 'var(--danger-t)' }}>{cfgError || swapError}</p>
                 )}
-                <p className="coach-text">Choose engine, strength and your color — locked once you move.</p>
+                <p className="coach-text">Choose engine, strength and your color — locked once the match starts.</p>
               </div>
             ) : (
               <>
@@ -237,26 +236,13 @@ export default function PlaySidebar({ fen, onBotFirst, onTakeback, onRedo }) {
         )}
       </div>
 
-      {(showBotFirst || isBotGame) && (
+      {showBotFirst && (
         <div className="card play-card">
           <div className="play-btn-grid">
-            {showBotFirst && (
-              <button className="btn-sm interactive" onClick={onBotFirst}>
-                🤖 Bot starts
-              </button>
-            )}
-            {isBotGame && (
-              <>
-                <button className="btn-sm interactive" onClick={onTakeback} disabled={!canTakeback}>
-                  ↩ Takeback
-                </button>
-                <button className="btn-sm interactive" onClick={onRedo} disabled={!canRedo}>
-                  ↪ Redo
-                </button>
-              </>
-            )}
+            <button className="btn-sm interactive" onClick={onBotFirst}>
+              🤖 Bot starts
+            </button>
           </div>
-          {started && swapError && <p className="coach-text" style={{ color: 'var(--danger-t)' }}>{swapError}</p>}
         </div>
       )}
 

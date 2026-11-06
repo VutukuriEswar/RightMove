@@ -11,6 +11,7 @@ import { useLeaveGameStore } from '../store/leaveGameStore';
 import { setActiveGameResigner, clearActiveGameResigner } from '../lib/activeGameResign';
 import Board2D from '../components/board/Board2D';
 import Board3D from '../components/board/Board3D';
+import BoardThemePicker from '../components/board/BoardThemePicker';
 import Clock from '../components/game/Clock';
 import MoveList from '../components/game/MoveList';
 import CoachPanel from '../components/game/CoachPanel';
@@ -43,6 +44,8 @@ export default function GameRoom() {
     waitingForOpponent,
     hasTimer,
     serverError,
+    canTakeback,
+    canRedo,
     initGame,
   } = useGameStore();
 
@@ -109,6 +112,7 @@ export default function GameRoom() {
   const [replayingPgn, setReplayingPgn] = useState(false);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showTheme, setShowTheme] = useState(false);
   const [showReadyModal, setShowReadyModal] = useState(false);
   const [playersReady, setPlayersReady] = useState(false);
   const [showGameOver, setShowGameOver] = useState(false);
@@ -705,9 +709,53 @@ export default function GameRoom() {
           <PlaySidebar
             fen={fen}
             onBotFirst={sendBotFirstMove}
-            onTakeback={sendTakeback}
-            onRedo={sendRedo}
+            settingsLocked={playersReady || moves.length > 0 || result !== null}
           />
+
+          {isEngineGame && (
+            <div className="card play-card">
+              <button
+                className="btn-neon interactive"
+                style={{
+                  width: '100%',
+                  background: 'transparent',
+                  color: 'var(--royal-gold, #D4AF37)',
+                  borderColor: 'var(--royal-gold, #D4AF37)',
+                  opacity: (moves.length > 0 || importedPgn || !gameActive) ? 0.4 : 1,
+                  cursor: (moves.length > 0 || importedPgn || !gameActive) ? 'not-allowed' : 'pointer'
+                }}
+                disabled={moves.length > 0 || importedPgn || !gameActive || importingPgn}
+                title={(moves.length > 0 || importedPgn) ? 'Cannot import PGN while a game is already in progress' : 'Import PGN to continue from a position'}
+                onClick={handleTriggerPgnImport}
+              >{importingPgn ? 'Importing PGN...' : '📥 Import PGN'}</button>
+              <input
+                ref={pgnFileInputRef}
+                type="file"
+                accept=".pgn"
+                style={{ display: 'none' }}
+                onChange={handlePgnFileChange}
+              />
+            </div>
+          )}
+
+          {trainingMode && (
+            <div className="card play-card">
+              <button
+                type="button"
+                className={`params-toggle interactive ${showTheme ? 'open' : ''}`}
+                onClick={() => setShowTheme((v) => !v)}
+                aria-expanded={showTheme}
+              >
+                <span>🎨 Board &amp; pieces</span>
+                <span className="params-chevron">{showTheme ? '▾' : '▸'}</span>
+              </button>
+              {showTheme && (
+                <div className="drawer-theme-picker">
+                  <BoardThemePicker inline />
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="game-drawer-nav">
             <button
@@ -813,6 +861,24 @@ export default function GameRoom() {
             title={!isPlayerTurn ? 'You can only resign on your turn' : 'Resign the game'}
             onClick={resignAndClose}
           >Resign</button>
+          {isEngineGame && (
+            <>
+              <button
+                className="btn-neon interactive"
+                style={{ background: 'transparent', color: 'var(--royal-gold, #D4AF37)', borderColor: 'var(--royal-gold, #D4AF37)', opacity: !canTakeback ? 0.45 : 1 }}
+                disabled={!canTakeback}
+                title={canTakeback ? 'Take back your last move' : 'Takeback unavailable'}
+                onClick={sendTakeback}
+              >↩ Takeback</button>
+              <button
+                className="btn-neon interactive"
+                style={{ background: 'transparent', color: 'var(--royal-gold, #D4AF37)', borderColor: 'var(--royal-gold, #D4AF37)', opacity: !canRedo ? 0.45 : 1 }}
+                disabled={!canRedo}
+                title={canRedo ? 'Redo your last takeback' : 'Redo unavailable'}
+                onClick={sendRedo}
+              >↪ Redo</button>
+            </>
+          )}
           <div style={{ position: 'relative' }}>
             <button
               className="btn-neon interactive"
@@ -831,37 +897,13 @@ export default function GameRoom() {
             )}
           </div>
           {isEngineGame && (
-            <>
-              <button
-                className="btn-neon interactive"
-                style={{
-                  width: '100%',
-                  marginTop: '8px',
-                  background: 'transparent',
-                  color: 'var(--royal-gold, #D4AF37)',
-                  borderColor: 'var(--royal-gold, #D4AF37)',
-                  opacity: (moves.length > 0 || importedPgn || !gameActive) ? 0.4 : 1,
-                  cursor: (moves.length > 0 || importedPgn || !gameActive) ? 'not-allowed' : 'pointer'
-                }}
-                disabled={moves.length > 0 || importedPgn || !gameActive || importingPgn}
-                title={(moves.length > 0 || importedPgn) ? 'Cannot import PGN while a game is already in progress' : 'Import PGN to continue from a position'}
-                onClick={handleTriggerPgnImport}
-              >{importingPgn ? 'Importing PGN...' : '📥 Import PGN'}</button>
-              <input
-                ref={pgnFileInputRef}
-                type="file"
-                accept=".pgn"
-                style={{ display: 'none' }}
-                onChange={handlePgnFileChange}
-              />
-              <button
-                className="btn-neon interactive"
-                style={{ width: '100%', marginTop: '8px', background: 'transparent', color: 'var(--royal-gold, #D4AF37)', borderColor: 'var(--royal-gold, #D4AF37)' }}
-                disabled={pausing}
-                title="Pause and continue later"
-                onClick={handlePause}
-              >{pausing ? 'Pausing...' : '⏸ Pause'}</button>
-            </>
+            <button
+              className="btn-neon interactive"
+              style={{ background: 'transparent', color: 'var(--royal-gold, #D4AF37)', borderColor: 'var(--royal-gold, #D4AF37)' }}
+              disabled={pausing}
+              title="Pause and continue later"
+              onClick={handlePause}
+            >{pausing ? 'Pausing...' : '⏸ Pause'}</button>
           )}
         </div>
       )

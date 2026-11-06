@@ -906,6 +906,34 @@
   gap: 10px;
 }
 
+.drawer-theme-picker {
+  margin-top: 10px;
+  border: 1px solid var(--royal-border, rgba(212, 175, 55, 0.2));
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.game-drawer .btp-section {
+  padding: 12px;
+}
+
+.game-drawer .btp-view-card {
+  gap: 8px;
+  padding: 10px;
+}
+
+.game-drawer .btp-board-grid,
+.game-drawer .btp-piece-grid-new,
+.game-drawer .btp-model3d-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.game-drawer .btp-footer {
+  padding: 10px 12px;
+}
+
 .game-drawer-nav .btn-neon {
   flex: 1;
   text-align: center;
@@ -1177,6 +1205,7 @@
 
 .action-buttons {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -1311,7 +1340,7 @@
   height: auto;
   min-height: 0;
   flex: none;
-  align-self: flex-start;
+  align-self: center;
 }
 
 .coach-board-area .board2d-outer {
@@ -1336,7 +1365,7 @@
 
 .coach-control-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
   gap: 8px;
 }
 
