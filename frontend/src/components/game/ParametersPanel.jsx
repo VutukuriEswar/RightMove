@@ -40,7 +40,7 @@ export default function ParametersPanel({ fen, playerColor = 'white', onProbs })
   const youAreWhite = playerColor !== 'black';
 
   return (
-    <div className="params-panel card">
+    <div className="card play-card params-panel">
       <button
         type="button"
         className={`params-toggle interactive ${open ? 'open' : ''}`}

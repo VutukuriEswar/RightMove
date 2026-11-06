@@ -709,25 +709,20 @@ export default function GameRoom() {
           <PlaySidebar
             fen={fen}
             onBotFirst={sendBotFirstMove}
-            settingsLocked={playersReady || moves.length > 0 || result !== null}
+            settingsLocked={moves.length > 0 || result !== null}
           />
 
           {isEngineGame && (
             <div className="card play-card">
               <button
-                className="btn-neon interactive"
-                style={{
-                  width: '100%',
-                  background: 'transparent',
-                  color: 'var(--royal-gold, #D4AF37)',
-                  borderColor: 'var(--royal-gold, #D4AF37)',
-                  opacity: (moves.length > 0 || importedPgn || !gameActive) ? 0.4 : 1,
-                  cursor: (moves.length > 0 || importedPgn || !gameActive) ? 'not-allowed' : 'pointer'
-                }}
+                type="button"
+                className={`params-toggle interactive${(moves.length > 0 || importedPgn || !gameActive) ? ' pgn-import-disabled' : ''}`}
                 disabled={moves.length > 0 || importedPgn || !gameActive || importingPgn}
                 title={(moves.length > 0 || importedPgn) ? 'Cannot import PGN while a game is already in progress' : 'Import PGN to continue from a position'}
                 onClick={handleTriggerPgnImport}
-              >{importingPgn ? 'Importing PGN...' : '📥 Import PGN'}</button>
+              >
+                <span>{importingPgn ? '⏳ Importing PGN…' : '📥 Import PGN'}</span>
+              </button>
               <input
                 ref={pgnFileInputRef}
                 type="file"
@@ -756,27 +751,27 @@ export default function GameRoom() {
               )}
             </div>
           )}
+        </div>
 
-          <div className="game-drawer-nav">
-            <button
-              className="btn-neon interactive"
-              onClick={() => {
-                setSidebarOpen(false);
-                navigate('/lobby');
-              }}
-            >
-              🏠 Lobby
-            </button>
-            <button
-              className="btn-neon interactive"
-              onClick={() => {
-                setSidebarOpen(false);
-                navigate('/friends');
-              }}
-            >
-              👥 Friends
-            </button>
-          </div>
+        <div className="game-drawer-nav">
+          <button
+            className="btn-neon interactive"
+            onClick={() => {
+              setSidebarOpen(false);
+              navigate('/lobby');
+            }}
+          >
+            🏠 Lobby
+          </button>
+          <button
+            className="btn-neon interactive"
+            onClick={() => {
+              setSidebarOpen(false);
+              navigate('/friends');
+            }}
+          >
+            👥 Friends
+          </button>
         </div>
       </div>
     </div>,

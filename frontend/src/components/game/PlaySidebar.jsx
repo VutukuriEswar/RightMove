@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { gamesApi } from '../../lib/api';
 import WdlBar from './WdlBar';
@@ -22,11 +22,27 @@ export default function PlaySidebar({ fen, onBotFirst, settingsLocked = false })
   const [cfgError, setCfgError] = useState(null);
   const [showWinChances, setShowWinChances] = useState(true);
   const [showSetup, setShowSetup] = useState(true);
+  const [botStarting, setBotStarting] = useState(false);
+
+  const difficultyDebounceRef = useRef(null);
+
+  useEffect(() => {
+    if (moves.length > 0) {
+      setBotStarting(false);
+    }
+  }, [moves.length]);
+
+  useEffect(() => {
+    if (botStarting) {
+      const timer = setTimeout(() => setBotStarting(false), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [botStarting]);
 
   const started = moves.length > 0;
   const isBotGame = mode === 'bot';
-  const flipLocked = started || !!result;
-  const locked = started || !!settingsLocked || !!result;
+  const flipLocked = started || botStarting || !!result;
+  const locked = started || botStarting || !!settingsLocked || !!result;
   const userIsWhite = playerColor !== 'black';
   const botIsWhite = !userIsWhite;
 
@@ -80,24 +96,32 @@ export default function PlaySidebar({ fen, onBotFirst, settingsLocked = false })
     }
   };
 
-  const handleDifficulty = async (value) => {
-    if (!gameId || locked || cfgBusy) return;
-    setCfgBusy(true); setCfgError(null);
-    try {
-      const payload = botEngine === 'maia3'
-        ? { bot_engine: 'maia3', maia_elo: value }
-        : { bot_engine: 'stockfish', bot_depth: value };
-      const updated = await gamesApi.updateBotConfig(gameId, payload);
-      useGameStore.setState({
-        botEngine: updated.bot_engine ?? botEngine,
-        botDepth: updated.bot_depth ?? null,
-        maiaElo: updated.maia_elo ?? null,
-      });
-    } catch (e) {
-      setCfgError(e.message || 'Difficulty change failed');
-    } finally {
-      setCfgBusy(false);
+  const handleDifficulty = (value) => {
+    if (!gameId || locked) return;
+    if (botEngine === 'maia3') {
+      useGameStore.setState({ maiaElo: value });
+    } else {
+      useGameStore.setState({ botDepth: value });
     }
+    if (difficultyDebounceRef.current) clearTimeout(difficultyDebounceRef.current);
+    difficultyDebounceRef.current = setTimeout(async () => {
+      setCfgBusy(true); setCfgError(null);
+      try {
+        const payload = botEngine === 'maia3'
+          ? { bot_engine: 'maia3', maia_elo: value }
+          : { bot_engine: 'stockfish', bot_depth: value };
+        const updated = await gamesApi.updateBotConfig(gameId, payload);
+        useGameStore.setState({
+          botEngine: updated.bot_engine ?? botEngine,
+          botDepth: updated.bot_depth ?? null,
+          maiaElo: updated.maia_elo ?? null,
+        });
+      } catch (e) {
+        setCfgError(e.message || 'Difficulty change failed');
+      } finally {
+        setCfgBusy(false);
+      }
+    }, 250);
   };
 
   const handleColor = async (color) => {
@@ -110,6 +134,16 @@ export default function PlaySidebar({ fen, onBotFirst, settingsLocked = false })
       setSwapError(e.message || 'Swap failed');
     } finally {
       setSwapBusy(false);
+    }
+  };
+
+  const handleBotStarts = () => {
+    if (botStarting || locked) return;
+    setBotStarting(true);
+    try {
+      onBotFirst?.();
+    } catch (_) {
+      setBotStarting(false);
     }
   };
 
@@ -238,11 +272,15 @@ export default function PlaySidebar({ fen, onBotFirst, settingsLocked = false })
 
       {showBotFirst && (
         <div className="card play-card">
-          <div className="play-btn-grid">
-            <button className="btn-sm interactive" onClick={onBotFirst}>
-              🤖 Bot starts
-            </button>
-          </div>
+          <button
+            type="button"
+            className="params-toggle interactive"
+            onClick={handleBotStarts}
+            disabled={botStarting}
+            style={{ justifyContent: 'center' }}
+          >
+            <span>{botStarting ? '🤖 Bot is thinking…' : '🤖 Bot starts'}</span>
+          </button>
         </div>
       )}
 
