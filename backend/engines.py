@@ -502,6 +502,7 @@ def _build_explanation(board: chess.Board, move: chess.Move, info: Optional[ches
 async def analyze_position(
     fen: str,
     multipv: int = 3,
+    depth: Optional[int] = None,
 ) -> AnalysisResult:
     board = chess.Board(fen)
 
@@ -511,7 +512,7 @@ async def analyze_position(
     try:
         sf_coro = sf_engine.analyse(
             board,
-            chess.engine.Limit(depth=STOCKFISH_DEPTH),
+            chess.engine.Limit(depth=depth or STOCKFISH_DEPTH),
             multipv=multipv,
         )
 

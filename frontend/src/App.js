@@ -21,6 +21,7 @@ import Profile from './pages/Profile';
 import MatchHistory from './pages/MatchHistory';
 import SharedReview from './pages/SharedReview';
 import Learn from './pages/Learn';
+import Events from './pages/Events';
 import AdminUsers from './pages/AdminUsers';
 import AdminTraining from './pages/AdminTraining';
 import { useAuthStore } from './store/authStore';
@@ -64,6 +65,8 @@ const router = createBrowserRouter([
       { path: '/profile', element: <RequireAuth><Profile /></RequireAuth> },
       { path: '/history', element: <RequireAuth><MatchHistory /></RequireAuth> },
       { path: '/learn', element: <RequireAuth><Learn /></RequireAuth> },
+      { path: '/events', element: <Events /> },
+      { path: '/events/:tourId', element: <Events /> },
       { path: '/admin/users', element: <RequireAdmin><AdminUsers /></RequireAdmin> },
       { path: '/admin/training', element: <RequireAdmin><AdminTraining /></RequireAdmin> },
       { path: '/shared/:id', element: <SharedReview /> },

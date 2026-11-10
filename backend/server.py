@@ -18,6 +18,7 @@ from api import router as api_router
 from api import recover_interrupted_jobs, _ensure_gm_matcher_warm
 from realtime import handle_game_socket, handle_matchmaking_socket
 from engines import shutdown_maia
+from broadcasts import init_broadcast_worker, shutdown_broadcast_worker, close_broadcast_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,6 +58,11 @@ async def lifespan(app: FastAPI):
         _ensure_gm_matcher_warm()
     except Exception:
         pass
+
+    try:
+        await init_broadcast_worker()
+    except Exception as e:
+        logger.warning(f"[broadcasts] worker failed to start: {e}")
     yield
 
     logger.info("Shutting down…")
@@ -68,6 +74,14 @@ async def lifespan(app: FastAPI):
             pass
         except Exception:
             pass
+    try:
+        await shutdown_broadcast_worker()
+    except Exception:
+        pass
+    try:
+        await close_broadcast_client()
+    except Exception:
+        pass
     try:
         await shutdown_maia()
     except Exception:

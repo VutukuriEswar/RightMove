@@ -196,6 +196,31 @@ export const reportApi = {
   },
 };
 
+export const broadcastsApi = {
+  top: (page = 1) => api.get(`/broadcasts/top?page=${page}`),
+  live: (nb = 20) => api.get(`/broadcasts/live?nb=${nb}`),
+  search: (q) => api.get(`/broadcasts/search?q=${encodeURIComponent(q)}`),
+  tournament: (tourId) => api.get(`/broadcasts/tournament/${encodeURIComponent(tourId)}`),
+  round: (roundId, tourId) =>
+    api.get(
+      `/broadcasts/round/${encodeURIComponent(roundId)}?tour_id=${encodeURIComponent(tourId)}`
+    ),
+  roundPgnUrl: (roundId) => `${BASE_URL}/broadcasts/round/${encodeURIComponent(roundId)}/pgn`,
+  analysis: (roundId, gameId) =>
+    api.get(
+      `/broadcasts/analysis?round_id=${encodeURIComponent(roundId)}&game_id=${encodeURIComponent(gameId)}`
+    ),
+  analyzeGame: (roundId, gameId, tourId = null) =>
+    api.post('/broadcasts/analyze-game', {
+      round_id: roundId,
+      game_id: gameId,
+      ...(tourId ? { tour_id: tourId } : {}),
+    }),
+  analyzePosition: (fen, multipv = 3) =>
+    api.post('/broadcasts/analyze-position', { fen, multipv }),
+  importPgn: (pgn) => api.post('/broadcasts/import-pgn', { pgn }),
+};
+
 const WS_BASE = (process.env.REACT_APP_WS_URL || 'ws://localhost:8000');
 
 export function createGameSocket(gameId, token) {

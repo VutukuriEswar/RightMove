@@ -32,6 +32,12 @@ RightMove is a comprehensive web application for playing, learning, and analyzin
 - Upload your own PGN files for batch game analysis.
 - Analyze any single position on demand.
 
+🏟️ **Live Events (Free Forever)**
+- Watch major chess broadcasts from the free Lichess Broadcast API: live, upcoming, and recent championship events.
+- Open any tournament to follow every board, replay finished games, and see saved Stockfish analysis.
+- Finished games in tracked events are auto-analysed in the background by a dedicated local Stockfish process; anyone can also request analysis (login required) and the result is saved for everyone.
+- Import any PGN when an event is not covered by Lichess and get the same analysis pipeline.
+
 🏆 **GM Challenge & Custom Models**
 - Face the built-in GM-style policy network and get scored on your play.
 - Train your own playing-style models: upload PGNs, tune epochs / batch size / residual blocks / learning rate, track jobs (pause, resume, delete), then publish models for bot play.
@@ -60,6 +66,7 @@ RightMove is a comprehensive web application for playing, learning, and analyzin
 - **Bcrypt** for secure password hashing
 - **Pydantic v2** for request/response schemas and settings
 - **ReportLab** for PDF report export
+- **httpx** for the free Lichess Broadcast API client
 
 **Frontend:**
 - React 19 for UI components
@@ -144,6 +151,8 @@ There is no rating ladder. Profiles and history show **wins / draws / losses** c
 - `/profile` — Your profile, stats, and avatar (auth)
 - `/history` — Match history with W/D/L (auth)
 - `/learn` — PGN upload and position analysis (auth)
+- `/events` — Public live, upcoming, and recent chess broadcasts (no login)
+- `/events/:tourId` — Public broadcast tournament view with boards and analysis (no login)
 - `/admin/users` — User management (admin)
 - `/admin/training` — Model training pipeline (admin)
 
@@ -198,6 +207,18 @@ There is no rating ladder. Profiles and history show **wins / draws / losses** c
 - `POST /learn/analyze-pgn` - Batch analysis of an uploaded PGN
 - `POST /learn/analyze-position` - One-off position analysis
 
+**Live Broadcasts (Lichess, free):**
+- `GET /broadcasts/top` - Live, upcoming, and recent broadcast events
+- `GET /broadcasts/live` - Events with an ongoing round
+- `GET /broadcasts/search` - Search the broadcast archive
+- `GET /broadcasts/tournament/{tour_id}` - Tournament metadata and rounds
+- `GET /broadcasts/round/{round_id}?tour_id=...` - Round boards with cached analysis summaries
+- `GET /broadcasts/round/{round_id}/pgn` - Download the round PGN
+- `GET /broadcasts/analysis?round_id=...&game_id=...` - Saved analysis or queue status
+- `POST /broadcasts/analyze-game` - Queue a finished game for analysis (auth)
+- `POST /broadcasts/analyze-position` - Analyse a broadcast position (auth)
+- `POST /broadcasts/import-pgn` - Import a PGN into the analysis pipeline (auth)
+
 **Admin & Training (Admin):**
 - `GET /admin/users` - List all users (Admin only)
 - `PATCH /admin/users/{id}` - Update user role/status (Admin only)
@@ -238,6 +259,11 @@ There is no rating ladder. Profiles and history show **wins / draws / losses** c
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Seeded admin account | set in `.env` |
 | `HF_EXPLANATIONS_ENABLED` | Try local AI with 180s timeout, rule-based on error/timeout/off | `true` |
 | `HF_LOCAL_MODEL_ID` | Explanation model (auto-downloaded, ~3 GB) | `Qwen/Qwen2.5-1.5B-Instruct` |
+| `LICHESS_TOKEN` | Optional free Lichess token (`study:read` scope) for reliable broadcast requests | empty |
+| `BROADCAST_ANALYSIS_DEPTH` | Stockfish depth for auto/manual broadcast game analysis | `12` |
+| `BROADCAST_POSITION_DEPTH` | Stockfish depth for live broadcast position analysis | `18` |
+| `BROADCAST_AUTO_ANALYSIS_DAILY_LIMIT` | Max auto-analysed broadcast games per day (`0` = unlimited) | `300` |
+| `BROADCAST_ENGINE_HASH_MB` | Hash size for the dedicated broadcast Stockfish process | `128` |
 
 **Frontend (`frontend/.env`, see `frontend/.env.example`):**
 
@@ -261,12 +287,13 @@ There is no rating ladder. Profiles and history show **wins / draws / losses** c
 RightMove/
 ├── backend/
 │   ├── server.py          # FastAPI app, lifespan, WebSocket routes, health
-│   ├── api.py             # 8 REST routers, 50 endpoints
+│   ├── api.py             # 9 REST routers, 73 endpoints
 │   ├── core.py            # Settings, JWT/bcrypt security, Mongo/GridFS, schemas
 │   ├── engines.py         # Stockfish pool, Maia-3 subprocess, move analysis
 │   ├── gm.py              # GM policy-value net, dataset, training jobs
 │   ├── intelligence.py    # Matchmaking, summaries, HF explanations, coaching
 │   ├── realtime.py        # Live game sockets, clocks, matchmaking channel
+│   ├── broadcasts.py      # Lichess broadcast client, cache, queue, Stockfish worker
 │   ├── requirements.txt
 │   ├── .env.example
 │   ├── engines/
@@ -276,12 +303,12 @@ RightMove/
 │   └── checkpoints/       # Trained GM checkpoints (git-ignored)
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/         # 13 routes: Home → GameRoom → Review → Admin
-│   │   ├── components/    # 3d, board (2D/3D/theme picker), game (10), shared
+│   │   ├── pages/         # 16 routes: Home → Events → GameRoom → Review → Admin
+│   │   ├── components/    # 3d, board, game, events (cards/analysis/chart), shared
 │   │   ├── hooks/         # useAuth, useGameSocket, useLeaveGameGuard
 │   │   ├── lib/           # API client, chess utils, analysis, persistence
 │   │   ├── store/         # Zustand: auth, game, board theme, theme, leave-game
-│   │   ├── styles/        # tokens, globals, components, pages
+│   │   ├── styles/        # tokens, globals, components, pages, events
 │   │   ├── App.js         # Router with auth/admin guards
 │   │   └── index.js
 │   ├── public/            # index.html, board/piece themes, 3D models
@@ -296,6 +323,8 @@ RightMove/
 Move logs are stored **client-side in IndexedDB** (no server storage cost for raw per-ply data). Only the game summary and key moments are persisted in MongoDB. This means replays are fully local once the game ends, with the server sending the final move sequence to the client via WebSocket.
 
 Large PGN uploads use an adaptive budget: while MongoDB is under its configured capacity they go to GridFS; above the threshold they spill to `backend/data/uploads/`, and a background migrator moves them back once storage frees up.
+
+Live Events use the free public **Lichess Broadcast API** with no paid key. Responses are cached in-process (with stale fallback during rate limits), finished games from live/upcoming/recent events and any tournament a user opens are queued for analysis, and a dedicated single-threaded Stockfish process handles the queue so normal play is never starved. Analyses are stored globally in MongoDB and shown to every visitor; the daily budget only throttles automatic jobs, while logged-in users can always request a game manually.
 
 ## License
 

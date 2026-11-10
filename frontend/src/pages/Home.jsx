@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../hooks/useAuth';
+import { broadcastsApi } from '../lib/api';
 
 const JOURNEY = [
   {
@@ -68,6 +69,8 @@ export default function Home() {
 
       </section>
 
+      <LiveEventsTeaser />
+
       <section className="features">
         <h2 className="features-title">How RightMove Works</h2>
         <div className="ornament-line">✦ ✦ ✦</div>
@@ -123,5 +126,94 @@ export default function Home() {
       </section>
 
     </motion.div>
+  );
+}
+
+function LiveEventsTeaser() {
+  const [events, setEvents] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    broadcastsApi
+      .live(6)
+      .then((data) => {
+        if (cancelled) return;
+        const live = (data.events || []).filter((event) => event.is_live);
+        setEvents(live.slice(0, 4));
+      })
+      .catch(() => {
+        if (!cancelled) setEvents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <section className="home-events">
+      <div className="home-events-head">
+        <div>
+          <p className="ev-kicker">Free forever · Lichess broadcasts</p>
+          <h2 className="features-title">Live Events</h2>
+        </div>
+        <Link to="/events" className="btn-neon interactive">All events</Link>
+      </div>
+      <div className="ornament-line">✦ ✦ ✦</div>
+      <p className="features-sub">
+        Follow the world's biggest tournaments as they happen, then replay every finished game
+        with free local Stockfish analysis — no subscription required.
+      </p>
+
+      {events === null && (
+        <p className="ev-empty-note">Looking for live broadcasts…</p>
+      )}
+
+      {events && events.length === 0 && (
+        <Link to="/events" className="home-event-empty glass-panel interactive">
+          <span className="home-event-empty-icon" aria-hidden="true">♜</span>
+          <span>
+            <strong>No broadcasts are live right now.</strong>
+            <span className="home-event-empty-sub">Browse upcoming and recent events →</span>
+          </span>
+        </Link>
+      )}
+
+      {events && events.length > 0 && (
+        <div className="home-events-row">
+          {events.map((event, index) => (
+            <motion.div
+              key={event.id}
+              initial={{ opacity: 0, y: 18 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.4, delay: index * 0.06 }}
+            >
+              <Link to={`/events/${event.id}`} className="home-event-card glass-panel interactive">
+                <span className="home-event-media">
+                  <span className="home-event-media-fallback" aria-hidden="true">♜</span>
+                  {event.image && (
+                    <img
+                      src={event.image}
+                      alt=""
+                      loading="lazy"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  )}
+                  <span className="ev-status ev-status-live">
+                    <span className="ev-live-dot" /> Live
+                  </span>
+                </span>
+                <span className="home-event-body">
+                  <span className="home-event-name">{event.name}</span>
+                  <span className="home-event-meta">
+                    {event.active_round?.name || event.format || 'Broadcast'}
+                  </span>
+                </span>
+              </Link>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

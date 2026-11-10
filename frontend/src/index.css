@@ -86,12 +86,20 @@ html[data-theme="dark"] {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  * {
+  *, *::before, *::after {
     cursor: none !important;
   }
   a, button, input, select, textarea, label,
   [role="button"], [tabindex], .interactive,
   .promotion-btn {
+    cursor: none !important;
+  }
+  input[type='range'],
+  input[type='range']::-webkit-slider-thumb,
+  input[type='range']::-webkit-slider-runnable-track,
+  input[type='range']::-moz-range-thumb,
+  input[type='range']::-moz-range-track,
+  input[type='range']::-moz-range-progress {
     cursor: none !important;
   }
 }

@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     hf_explanations_enabled: bool = True
     hf_local_model_id: str = "Qwen/Qwen2.5-1.5B-Instruct"
 
+    # Configures live broadcast and Stockfish analysis options
+    lichess_token: str = ""
+    broadcast_analysis_depth: int = 12
+    broadcast_position_depth: int = 18
+    broadcast_auto_analysis_daily_limit: int = 300
+    broadcast_engine_hash_mb: int = 128
+
 
 # Returns cached application settings
 @lru_cache()
@@ -271,6 +278,20 @@ async def create_indexes():
 
     await db.training_jobs.create_index("job_id", unique=True)
     await db.gm_models.create_index("model_id", unique=True)
+
+    await db.broadcast_analyses.create_index(
+        [("round_id", 1), ("game_id", 1)], unique=True
+    )
+    await db.broadcast_analyses.create_index("updated_at")
+    await db.broadcast_analysis_queue.create_index(
+        [("round_id", 1), ("game_id", 1)], unique=True
+    )
+    await db.broadcast_analysis_queue.create_index(
+        [("status", 1), ("priority", 1), ("created_at", 1)]
+    )
+    await db.broadcast_tracked_tours.create_index("tour_id", unique=True)
+    await db.broadcast_tracked_tours.create_index("last_seen")
+    await db.broadcast_round_scans.create_index("round_id", unique=True)
 
 
 # Defines API request and response schemas

@@ -51,6 +51,24 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import PlainTextResponse
+from broadcasts import (
+    BroadcastError,
+    analysis_status as broadcast_analysis_status,
+    analyze_position_for_broadcast,
+    enqueue_game as broadcast_enqueue_game,
+    enqueue_round_games as broadcast_enqueue_round_games,
+    get_round as broadcast_get_round,
+    get_round_analysis_map as broadcast_analysis_map,
+    get_round_pgn as broadcast_get_round_pgn,
+    get_tournament as broadcast_get_tournament,
+    list_live as broadcast_list_live,
+    list_top as broadcast_list_top,
+    public_analysis as broadcast_public_analysis,
+    search_events as broadcast_search_events,
+    track_tour as broadcast_track_tour,
+    track_top_events as broadcast_track_top_events,
+)
 
 # Section api/auth
 
@@ -3505,6 +3523,178 @@ async def delete_model(model_id: str, admin: dict = Depends(require_admin)):
             pass
     return {"deleted": model_id, "removed_files": removed}
 
+# Section api/broadcasts
+
+broadcasts_router = APIRouter(prefix="/broadcasts", tags=["broadcasts"])
+
+
+# Defines broadcast analysis request schema
+class BroadcastAnalyzeGameRequest(BaseModel):
+    round_id: str
+    game_id: str
+    tour_id: Optional[str] = None
+
+
+# Defines broadcast position analysis request schema
+class BroadcastPositionRequest(BaseModel):
+    fen: str
+    multipv: int = 3
+
+
+# Defines broadcast PGN import request schema
+class BroadcastImportRequest(BaseModel):
+    pgn: str
+
+
+# Returns free live/upcoming/recent broadcasts
+@broadcasts_router.get("/top")
+async def broadcasts_top(page: int = 1):
+    try:
+        data = await broadcast_list_top(page)
+    except BroadcastError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    try:
+        await broadcast_track_top_events(data)
+    except Exception:
+        pass
+    return data
+
+
+# Returns broadcasts with an ongoing round
+@broadcasts_router.get("/live")
+async def broadcasts_live(nb: int = 20):
+    try:
+        return {"events": await broadcast_list_live(nb)}
+    except BroadcastError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# Searches Lichess broadcasts by name
+@broadcasts_router.get("/search")
+async def broadcasts_search(q: str = ""):
+    try:
+        return {"events": await broadcast_search_events(q)}
+    except BroadcastError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# Returns one broadcast tournament with its rounds
+@broadcasts_router.get("/tournament/{tour_id}")
+async def broadcasts_tournament(tour_id: str):
+    try:
+        event = await broadcast_get_tournament(tour_id)
+        await broadcast_track_tour(event)
+        return event
+    except BroadcastError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# Returns one round with live game states and cached analysis summaries
+@broadcasts_router.get("/round/{round_id}")
+async def broadcasts_round(round_id: str, tour_id: str):
+    try:
+        detail = await broadcast_get_round(tour_id, round_id)
+        await broadcast_track_tour(detail.get("event") or {})
+        try:
+            await broadcast_enqueue_round_games(detail, priority=1)
+        except Exception:
+            pass
+        game_ids = [g.get("id") for g in (detail.get("games") or []) if g.get("id")]
+        analysis_map = await broadcast_analysis_map(round_id, game_ids)
+        for game in detail.get("games") or []:
+            game["analysis"] = analysis_map.get(game.get("id"))
+        return detail
+    except BroadcastError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# Downloads the PGN for one broadcast round
+@broadcasts_router.get("/round/{round_id}/pgn")
+async def broadcasts_round_pgn(round_id: str):
+    try:
+        text = await broadcast_get_round_pgn(round_id)
+    except BroadcastError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return PlainTextResponse(text, media_type="application/x-chess-pgn")
+
+
+# Returns cached analysis or queue status for a broadcast game
+@broadcasts_router.get("/analysis")
+async def broadcasts_analysis(round_id: str, game_id: str):
+    try:
+        return await broadcast_analysis_status(round_id, game_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Queues a broadcast game for Stockfish analysis (login required)
+@broadcasts_router.post("/analyze-game")
+async def broadcasts_analyze_game(
+    body: BroadcastAnalyzeGameRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    if not (len(body.round_id) == 8 and body.round_id.isalnum()):
+        raise HTTPException(status_code=422, detail="Invalid round id")
+    if not (len(body.game_id) == 8 and body.game_id.isalnum()):
+        raise HTTPException(status_code=422, detail="Invalid game id")
+    try:
+        return await broadcast_enqueue_game(
+            body.round_id,
+            body.game_id,
+            body.tour_id,
+            priority=0,
+            requested_by=current_user.get("username") or str(current_user["_id"]),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Analyses a position with the local Stockfish pool (login required)
+@broadcasts_router.post("/analyze-position")
+async def broadcasts_analyze_position(
+    body: BroadcastPositionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        board = chess.Board(body.fen)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid FEN")
+    try:
+        return await analyze_position_for_broadcast(
+            board.fen(), multipv=max(1, min(int(body.multipv or 3), 5))
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Imports a PGN and queues it for the same analysis pipeline (login required)
+@broadcasts_router.post("/import-pgn")
+async def broadcasts_import_pgn(
+    body: BroadcastImportRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    pgn_text = (body.pgn or "").strip()
+    if not pgn_text:
+        raise HTTPException(status_code=400, detail="PGN content is required")
+    if len(pgn_text) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="PGN is too large")
+    round_id = f"import:{uuid.uuid4().hex[:12]}"
+    try:
+        result = await broadcast_enqueue_game(
+            round_id,
+            "import",
+            None,
+            priority=0,
+            requested_by=current_user.get("username") or str(current_user["_id"]),
+            pgn_text=pgn_text,
+        )
+        result["round_id"] = round_id
+        result["game_id"] = "import"
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Section aggregated router
 router = APIRouter()
 router.include_router(auth_router)
@@ -3515,3 +3705,4 @@ router.include_router(coach_router)
 router.include_router(report_router)
 router.include_router(learn_router)
 router.include_router(admin_router)
+router.include_router(broadcasts_router)

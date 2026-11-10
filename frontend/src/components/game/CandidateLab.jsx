@@ -487,6 +487,7 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                           <label className="sim-slider">
                             <span>Full moves to simulate (you + bot)</span>
                             <input type="range" min="1" max="10" value={simN}
+                              className="interactive"
                               style={rangeFill(simN, 1, 10)}
                               onChange={(e) => setSimN(+e.target.value)} />
                             <em>{simN}</em>
@@ -494,6 +495,7 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                           <label className="sim-slider">
                             <span>Depth</span>
                             <input type="range" min="8" max="20" value={simDepth}
+                              className="interactive"
                               style={rangeFill(simDepth, 8, 20)}
                               onChange={(e) => setSimDepth(+e.target.value)} />
                             <em>{simDepth}</em>
@@ -597,6 +599,7 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                   </div>
                   <input
                     id="candidate-count"
+                    className="interactive"
                     type="range"
                     min="1"
                     max={MAX_COUNT}

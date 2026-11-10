@@ -2,7 +2,7 @@ import React, { useEffect, useRef, memo } from 'react';
 import { motion } from 'framer-motion';
 import { formatClock } from '../../lib/chessUtils';
 
-const Clock = memo(function Clock({ ms, active, onTimeout }) {
+const Clock = memo(function Clock({ ms, active, onTimeout, formatFn }) {
   const safMs = (typeof ms === 'number' && !isNaN(ms)) ? ms : 600000;
   const rafRef = useRef(null);
   const lastTickRef = useRef(null);
@@ -41,7 +41,7 @@ const Clock = memo(function Clock({ ms, active, onTimeout }) {
   }, [active, onTimeout]);
 
   const isLow = remaining <= 10000;
-  const displayStr = formatClock(remaining);
+  const displayStr = formatFn ? formatFn(remaining) : formatClock(remaining);
 
   return (
     <div

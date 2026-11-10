@@ -28,6 +28,13 @@ export function NavBar() {
 
   const inLiveGame = location.pathname.startsWith('/game/');
 
+  const isActive = (path) => {
+    if (path === '/events') return location.pathname.startsWith('/events');
+    if (path === '/admin/users') return location.pathname.startsWith('/admin/users');
+    if (path === '/admin/training') return location.pathname.startsWith('/admin/training');
+    return location.pathname === path;
+  };
+
   const handleLogout = () => {
     const inActiveGame =
       location.pathname.startsWith('/game/') && !!liveGameId && liveGameResult === null;
@@ -71,47 +78,127 @@ export function NavBar() {
           <span className="navbar-logo-text">RightMove</span>
         </Link>
 
-        {isLoggedIn && (
-          <button
-            className="navbar-menu-btn interactive"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-            aria-expanded={menuOpen}
-          >
-            {menuOpen ? '✕' : '☰'}
-          </button>
-        )}
+        <button
+          className="navbar-menu-btn interactive"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? '✕' : '☰'}
+        </button>
 
         <ul className="navbar-links" role="navigation" aria-label="Main navigation">
-          {isLoggedIn && (
+          {isLoggedIn ? (
             <>
-              <li><Link className="interactive" to="/lobby" onClick={() => setMenuOpen(false)}>Play</Link></li>
-              <li><Link className="interactive" to="/friends" onClick={() => setMenuOpen(false)}>Friends{friendTotal > 0 && <span className="nav-badge">{friendTotal > 99 ? '99+' : friendTotal}</span>}</Link></li>
-              <li><Link className="interactive" to="/learn" onClick={() => setMenuOpen(false)}>Learn</Link></li>
-              <li><Link className="interactive" to="/history" onClick={() => setMenuOpen(false)}>History</Link></li>
+              <li>
+                <Link
+                  className={`interactive${isActive('/lobby') ? ' active' : ''}`}
+                  to="/lobby"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Play
+                </Link>
+              </li>
+              <li>
+                <Link
+                  className={`interactive${isActive('/friends') ? ' active' : ''}`}
+                  to="/friends"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Friends
+                  {friendTotal > 0 && (
+                    <span className="nav-badge">
+                      {friendTotal > 99 ? '99+' : friendTotal}
+                    </span>
+                  )}
+                </Link>
+              </li>
+              <li>
+                <Link
+                  className={`interactive${isActive('/learn') ? ' active' : ''}`}
+                  to="/learn"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Learn
+                </Link>
+              </li>
+              <li>
+                <Link
+                  className={`interactive${isActive('/events') ? ' active' : ''}`}
+                  to="/events"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Events
+                </Link>
+              </li>
+              <li>
+                <Link
+                  className={`interactive${isActive('/history') ? ' active' : ''}`}
+                  to="/history"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  History
+                </Link>
+              </li>
               {user?.role === 'admin' && (
                 <>
-                  <li><Link className="interactive" to="/admin/users" onClick={() => setMenuOpen(false)}>Users</Link></li>
-                  <li><Link className="interactive" to="/admin/training" onClick={() => setMenuOpen(false)}>Training{trainingNew > 0 && <span className="nav-badge">{trainingNew > 99 ? '99+' : trainingNew}</span>}</Link></li>
+                  <li>
+                    <Link
+                      className={`interactive${isActive('/admin/users') ? ' active' : ''}`}
+                      to="/admin/users"
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      Users
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      className={`interactive${isActive('/admin/training') ? ' active' : ''}`}
+                      to="/admin/training"
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      Training
+                      {trainingNew > 0 && (
+                        <span className="nav-badge">
+                          {trainingNew > 99 ? '99+' : trainingNew}
+                        </span>
+                      )}
+                    </Link>
+                  </li>
                 </>
               )}
             </>
+          ) : (
+            <li>
+              <Link
+                className={`interactive${isActive('/events') ? ' active' : ''}`}
+                to="/events"
+                onClick={() => setMenuOpen(false)}
+              >
+                Events
+              </Link>
+            </li>
           )}
         </ul>
 
         <div className="navbar-auth">
           <button 
+            type="button"
             className="theme-toggle interactive" 
             onClick={toggleTheme} 
             aria-label="Toggle theme"
-            style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', padding: '0 8px', color: 'var(--royal-ink)' }}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           >
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
           
           {isLoggedIn ? (
             <>
-              <Link to="/profile" className="navbar-user interactive">
+              <Link
+                to="/profile"
+                className={`navbar-user interactive${location.pathname === '/profile' ? ' active' : ''}`}
+                onClick={() => setMenuOpen(false)}
+              >
                 <span className="navbar-avatar">
                   {user?.avatar_url
                     ? <img src={user.avatar_url} alt={user.username} />
@@ -121,6 +208,7 @@ export function NavBar() {
                 <span className="navbar-username">{user?.username}</span>
               </Link>
               <button
+                type="button"
                 className="btn-neon interactive"
                 onClick={handleLogout}
                 aria-label="Log out"
