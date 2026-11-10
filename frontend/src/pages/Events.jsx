@@ -8,6 +8,7 @@ import {
   formatBroadcastClock,
   formatEventDates,
   formatRoundDate,
+  gameResultClass,
   lastMoveSquares,
   parseClockStrToMs,
 } from '../lib/broadcastUtils';
@@ -18,14 +19,12 @@ import MoveList from '../components/game/MoveList';
 import EventCard from '../components/events/EventCard';
 import GameList from '../components/events/GameList';
 import AnalysisPanel from '../components/events/AnalysisPanel';
-import PgnImport from '../components/events/PgnImport';
 
 const TABS = [
-  { id: 'live', label: 'Live now' },
+  { id: 'all', label: 'All' },
+  { id: 'live', label: 'Live Now' },
+  { id: 'completed', label: 'Completed' },
   { id: 'upcoming', label: 'Upcoming' },
-  { id: 'recent', label: 'Recent' },
-  { id: 'search', label: 'Search' },
-  { id: 'import', label: 'Import PGN' },
 ];
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -55,15 +54,16 @@ export default function Events() {
 }
 
 function EventBrowser() {
-  const { isLoggedIn } = useAuth();
-  const [tab, setTab] = useState('live');
+  const [tab, setTab] = useState('all');
   const [top, setTop] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState(null);
+  const [searchQueries, setSearchQueries] = useState({
+    all: '',
+    live: '',
+    completed: '',
+    upcoming: '',
+  });
 
   const loadTop = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -84,35 +84,55 @@ function EventBrowser() {
     return () => clearInterval(timer);
   }, [loadTop]);
 
-  const runSearch = async (event) => {
-    event?.preventDefault();
-    const q = query.trim();
-    if (!q) return;
-    setSearching(true);
-    setSearchError(null);
-    try {
-      const data = await broadcastsApi.search(q);
-      setResults(data.events || []);
-    } catch (e) {
-      setSearchError(e.message || 'Search failed.');
-      setResults([]);
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const lists = {
-    live: (top?.active || []).filter((e) => e.is_live),
-    upcoming: dedupe([
+  const lists = useMemo(() => {
+    const liveList = (top?.active || []).filter((e) => e.is_live || e.active_round?.ongoing);
+    const upcomingList = dedupe([
       ...(top?.upcoming || []),
       ...(top?.active || []).filter((e) => e.is_upcoming),
-    ]),
-    recent: dedupe([
+    ]);
+    const completedList = dedupe([
       ...(top?.past || []),
       ...(top?.active || []).filter((e) => e.is_finished),
-    ]),
-  };
-  const current = lists[tab] || [];
+    ]);
+    const allList = dedupe([
+      ...liveList,
+      ...upcomingList,
+      ...completedList,
+      ...(top?.active || []),
+      ...(top?.past || []),
+    ]);
+
+    return {
+      all: allList,
+      live: liveList,
+      completed: completedList,
+      upcoming: upcomingList,
+    };
+  }, [top]);
+
+  const currentQuery = searchQueries[tab] || '';
+  const setTabQuery = (val) => setSearchQueries((prev) => ({ ...prev, [tab]: val }));
+
+  const filteredEvents = useMemo(() => {
+    const list = lists[tab] || [];
+    const q = currentQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((event) => {
+      const text = [
+        event.name,
+        event.format,
+        event.location,
+        event.time_control,
+        event.group?.name,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return text.includes(q);
+    });
+  }, [lists, tab, currentQuery]);
+
+  const activeTabMeta = TABS.find((t) => t.id === tab) || TABS[0];
 
   return (
     <motion.div
@@ -150,68 +170,64 @@ function EventBrowser() {
         ))}
       </div>
 
-      {tab === 'import' ? (
-        <PgnImport isLoggedIn={isLoggedIn} />
-      ) : tab === 'search' ? (
-        <section className="ev-search">
-          <form className="ev-search-form" onSubmit={runSearch}>
-            <input
-              className="ev-search-input"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search players, tournaments, cities…"
-              aria-label="Search broadcasts"
-            />
-            <button type="submit" className="btn-neon interactive" disabled={searching}>
-              {searching ? 'Searching…' : 'Search'}
+      <div className="ev-section-search-bar">
+        <div className="ev-search-input-wrap">
+          <span className="ev-search-icon" aria-hidden="true">🔍</span>
+          <input
+            type="text"
+            className="ev-search-input interactive"
+            value={currentQuery}
+            onChange={(e) => setTabQuery(e.target.value)}
+            placeholder={`Search ${activeTabMeta.label} events by name, format, or location…`}
+            aria-label={`Search ${activeTabMeta.label} events`}
+          />
+          {currentQuery && (
+            <button
+              type="button"
+              className="ev-search-clear interactive"
+              onClick={() => setTabQuery('')}
+              aria-label="Clear search"
+            >
+              ✕
             </button>
-          </form>
-          {searchError && <div className="alert alert-error">{searchError}</div>}
-          {results && results.length === 0 && !searching && (
-            <p className="ev-empty-note">No broadcasts matched that search.</p>
           )}
-          {results && results.length > 0 && (
-            <div className="ev-grid">
-              {results.map((event, index) => (
-                <EventCard key={event.id} event={event} index={index} />
-              ))}
-            </div>
-          )}
-          {!results && (
-            <p className="ev-empty-note">
-              Search the full Lichess broadcast archive — from local opens to world championships.
-            </p>
-          )}
-        </section>
-      ) : (
-        <section className="ev-list-section">
-          {loading && !top && <p className="ev-empty-note">Loading broadcasts…</p>}
-          {error && (
-            <div className="alert alert-error">
-              {error}{' '}
-              <button type="button" className="ev-text-btn interactive" onClick={() => loadTop()}>
-                Retry
-              </button>
-            </div>
-          )}
-          {!loading && top && current.length === 0 && (
-            <p className="ev-empty-note">
-              {tab === 'live'
-                ? 'No broadcasts are live right now. Check the Upcoming tab or browse Recent events.'
+        </div>
+        <div className="ev-search-count mono">
+          {filteredEvents.length} {filteredEvents.length === 1 ? 'event' : 'events'}
+        </div>
+      </div>
+
+      <section className="ev-list-section">
+        {loading && !top && <p className="ev-empty-note">Loading broadcasts…</p>}
+        {error && (
+          <div className="alert alert-error">
+            {error}{' '}
+            <button type="button" className="ev-text-btn interactive" onClick={() => loadTop()}>
+              Retry
+            </button>
+          </div>
+        )}
+        {!loading && top && filteredEvents.length === 0 && (
+          <p className="ev-empty-note">
+            {currentQuery
+              ? `No events matched "${currentQuery}" in ${activeTabMeta.label}.`
+              : tab === 'live'
+                ? 'No broadcasts are live right now. Check the Upcoming tab or browse Completed events.'
                 : tab === 'upcoming'
                   ? 'No upcoming broadcasts are listed yet.'
-                  : 'No recent broadcasts are available.'}
-            </p>
-          )}
-          {current.length > 0 && (
-            <div className="ev-grid">
-              {current.map((event, index) => (
-                <EventCard key={`${tab}-${event.id}`} event={event} index={index} />
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+                  : tab === 'completed'
+                    ? 'No completed broadcasts available.'
+                    : 'No broadcasts available.'}
+          </p>
+        )}
+        {filteredEvents.length > 0 && (
+          <div className="ev-grid">
+            {filteredEvents.map((event, index) => (
+              <EventCard key={`${tab}-${event.id}`} event={event} index={index} />
+            ))}
+          </div>
+        )}
+      </section>
     </motion.div>
   );
 }
@@ -228,6 +244,7 @@ function EventDetail({ tourId }) {
   const [analysis, setAnalysis] = useState(null);
   const [boardPly, setBoardPly] = useState(-1);
   const [flipped, setFlipped] = useState(false);
+  const [eventProgress, setEventProgress] = useState(null);
   const roundsRef = useRef(null);
 
   useEffect(() => {
@@ -262,6 +279,24 @@ function EventDetail({ tourId }) {
       });
     return () => {
       cancelled = true;
+    };
+  }, [tourId]);
+
+  useEffect(() => {
+    let alive = true;
+    const fetchProgress = async () => {
+      try {
+        const prog = await broadcastsApi.tournamentProgress(tourId);
+        if (alive && prog) {
+          setEventProgress(prog);
+        }
+      } catch (_) {}
+    };
+    fetchProgress();
+    const interval = setInterval(fetchProgress, 12000);
+    return () => {
+      alive = false;
+      clearInterval(interval);
     };
   }, [tourId]);
 
@@ -325,29 +360,44 @@ function EventDetail({ tourId }) {
     return games.find((g) => g.id === selectedGameId) || games[0] || null;
   }, [round, selectedGameId]);
 
-  const analysisMoves = analysis?.moves || [];
-  const safePly =
-    boardPly >= 0 && boardPly < analysisMoves.length ? boardPly : -1;
-  const currentMove = safePly >= 0 ? analysisMoves[safePly] : null;
+  const isLiveGame = selectedGame?.result === '*';
+
+  useEffect(() => {
+    if (!tourId || !roundId || !selectedGameId) return;
+    broadcastsApi.prioritize(tourId, roundId, selectedGameId, isLiveGame).catch(() => {});
+  }, [tourId, roundId, selectedGameId, isLiveGame]);
+
+  const gameMoves = useMemo(() => {
+    if (analysis?.moves && analysis.moves.length > 0) return analysis.moves;
+    return selectedGame?.moves || [];
+  }, [analysis, selectedGame]);
+
+  const safePly = boardPly >= 0 && boardPly < gameMoves.length ? boardPly : -1;
+  const currentMove = safePly >= 0 ? gameMoves[safePly] : null;
   const boardFen = currentMove?.fen_after || selectedGame?.fen || START_FEN;
   const lastMove = currentMove
     ? uciToSquares(currentMove.uci)
     : lastMoveSquares(selectedGame?.last_move);
 
   useEffect(() => {
-    if (!analysisMoves.length) return undefined;
+    if (!gameMoves.length) return undefined;
     const onKey = (e) => {
       if (e.key === 'ArrowLeft') {
-        setBoardPly((p) => Math.max(0, (p < 0 ? analysisMoves.length : p) - 1));
+        setBoardPly((p) => Math.max(0, (p < 0 ? gameMoves.length - 1 : p) - 1));
       } else if (e.key === 'ArrowRight') {
-        setBoardPly((p) => Math.min(analysisMoves.length - 1, p + 1));
-      } else if (e.key === 'Escape') {
+        setBoardPly((p) => (p < 0 ? 0 : Math.min(gameMoves.length - 1, p + 1)));
+      } else if (e.key === 'Home') {
+        setBoardPly(0);
+      } else if (e.key === 'End' || e.key === 'Escape') {
         setBoardPly(-1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [analysisMoves.length]);
+  }, [gameMoves.length]);
+
+  const isWhiteWinner = selectedGame?.result === '1-0';
+  const isBlackWinner = selectedGame?.result === '0-1';
 
   const whiteData = useMemo(() => {
     const name = analysis?.headers?.white || selectedGame?.white || 'White';
@@ -371,8 +421,9 @@ function EventDetail({ tourId }) {
       clockMs,
       resultText,
       initials: playerInitials(name),
+      isWinner: isWhiteWinner,
     };
-  }, [analysis, selectedGame]);
+  }, [analysis, selectedGame, isWhiteWinner]);
 
   const blackData = useMemo(() => {
     const name = analysis?.headers?.black || selectedGame?.black || 'Black';
@@ -396,10 +447,10 @@ function EventDetail({ tourId }) {
       clockMs,
       resultText,
       initials: playerInitials(name),
+      isWinner: isBlackWinner,
     };
-  }, [analysis, selectedGame]);
+  }, [analysis, selectedGame, isBlackWinner]);
 
-  const isLiveGame = selectedGame?.result === '*';
   const activeTurnColor = useMemo(() => {
     if (safePly >= 0 && currentMove) {
       return currentMove.is_white ? 'black' : 'white';
@@ -441,7 +492,7 @@ function EventDetail({ tourId }) {
   const isBottomTurn = activeTurnColor === bottomPlayer.color;
 
   const renderPlayerInfo = (player, isTurn, position) => (
-    <div className={`player-info ${position}${isTurn ? ' active-turn' : ''} ev-player-card`}>
+    <div className={`player-info ${position}${isTurn ? ' active-turn' : ''} ev-player-card${player.isWinner ? ' is-winner-card' : ''}`}>
       <div className="player-info-left">
         <div className="player-avatar ev-avatar">
           {player.avatar ? (
@@ -467,6 +518,7 @@ function EventDetail({ tourId }) {
           <div className="ev-player-name-row">
             {player.title && <span className="ev-player-title-pill">{player.title}</span>}
             <span className="player-name">{player.name}</span>
+            {player.isWinner && <span className="ev-crown" title="Winner">👑</span>}
             {player.fed && <span className="ev-player-fed-pill">{player.fed}</span>}
           </div>
           {player.rating && (
@@ -481,7 +533,7 @@ function EventDetail({ tourId }) {
       </div>
       <div className="player-info-right">
         {player.resultText ? (
-          <span className="ev-board-result-badge mono">{player.resultText}</span>
+          <span className={`ev-board-result-badge mono${player.isWinner ? ' is-winner' : ''}`}>{player.resultText}</span>
         ) : null}
         {safePly >= 0 && currentMove?.clock_str && player.color === (currentMove.is_white ? 'white' : 'black') ? (
           <div className="clock">
@@ -519,6 +571,15 @@ function EventDetail({ tourId }) {
             {meta && <p className="ev-detail-meta">{meta}</p>}
           </div>
           <div className="ev-detail-actions">
+            {eventProgress && eventProgress.total_games > 0 && (
+              <div className="ev-analysis-progress-badge" title="Automated Stockfish Analysis Pipeline">
+                <span className="ev-analysis-spark">⚡</span>
+                <span>
+                  Analysis: {eventProgress.completed_games}/{eventProgress.total_games} games
+                  {eventProgress.status === 'completed' ? ' · Ready' : ' in progress'}
+                </span>
+              </div>
+            )}
             {event.website && (
               <a className="ev-text-btn interactive" href={event.website} target="_blank" rel="noreferrer">
                 Event site ↗
@@ -585,6 +646,18 @@ function EventDetail({ tourId }) {
           <div className="ev-board-card glass-panel">
             {selectedGame ? (
               <>
+                <div className={`ev-outcome-banner ev-outcome-${gameResultClass(selectedGame.result)}`}>
+                  {selectedGame.result === '1-0' ? (
+                    <span><span className="ev-crown">👑</span> <strong>{selectedGame.white}</strong> won against {selectedGame.black} (1 - 0)</span>
+                  ) : selectedGame.result === '0-1' ? (
+                    <span><span className="ev-crown">👑</span> <strong>{selectedGame.black}</strong> won against {selectedGame.white} (0 - 1)</span>
+                  ) : selectedGame.result === '1/2-1/2' ? (
+                    <span>🤝 <strong>Draw</strong> between {selectedGame.white} and {selectedGame.black} (½ - ½)</span>
+                  ) : (
+                    <span><span className="ev-live-dot" /> <strong>Live Match</strong> · {selectedGame.white} vs {selectedGame.black} in progress</span>
+                  )}
+                </div>
+
                 {renderPlayerInfo(topPlayer, isTopTurn, 'top')}
                 <div className="ev-board-wrap">
                   <Board2D
@@ -596,7 +669,47 @@ function EventDetail({ tourId }) {
                   />
                 </div>
                 {renderPlayerInfo(bottomPlayer, isBottomTurn, 'bottom')}
+
                 <div className="ev-board-toolbar">
+                  <div className="ev-move-controls">
+                    <button
+                      type="button"
+                      className="ev-nav-btn interactive"
+                      onClick={() => setBoardPly(0)}
+                      disabled={!gameMoves.length || safePly === 0}
+                      title="First move (Home)"
+                    >
+                      |‹‹
+                    </button>
+                    <button
+                      type="button"
+                      className="ev-nav-btn interactive"
+                      onClick={() => setBoardPly((p) => Math.max(0, (p < 0 ? gameMoves.length - 1 : p) - 1))}
+                      disabled={!gameMoves.length || safePly === 0}
+                      title="Previous move (Left arrow)"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      type="button"
+                      className="ev-nav-btn interactive"
+                      onClick={() => setBoardPly((p) => (p < 0 ? 0 : Math.min(gameMoves.length - 1, p + 1)))}
+                      disabled={!gameMoves.length || (safePly >= 0 && safePly >= gameMoves.length - 1)}
+                      title="Next move (Right arrow)"
+                    >
+                      ›
+                    </button>
+                    <button
+                      type="button"
+                      className="ev-nav-btn interactive"
+                      onClick={() => setBoardPly(-1)}
+                      disabled={safePly < 0}
+                      title="Live / End position (End)"
+                    >
+                      ››|
+                    </button>
+                  </div>
+
                   <button
                     type="button"
                     className="ev-tool-btn interactive"
@@ -624,7 +737,8 @@ function EventDetail({ tourId }) {
                     </a>
                   )}
                 </div>
-                {currentMove && (
+
+                {currentMove ? (
                   <p className="ev-move-pill">
                     Move {Math.floor(safePly / 2) + 1}
                     {safePly % 2 === 0 ? '.' : '…'} {currentMove.san}
@@ -634,7 +748,11 @@ function EventDetail({ tourId }) {
                       </span>
                     )}
                   </p>
-                )}
+                ) : selectedGame?.last_move ? (
+                  <p className="ev-move-pill">
+                    Last move: {selectedGame.last_move}
+                  </p>
+                ) : null}
               </>
             ) : (
               <p className="ev-empty-note">
@@ -643,12 +761,12 @@ function EventDetail({ tourId }) {
             )}
           </div>
 
-          {analysisMoves.length > 0 && (
+          {gameMoves.length > 0 && (
             <section className="ev-moves glass-panel">
               <div className="ev-moves-head">
                 <div>
-                  <p className="ev-kicker">Stockfish replay</p>
-                  <h3 className="ev-section-title">Moves</h3>
+                  <p className="ev-kicker">{analysis ? 'Stockfish analyzed' : 'Game moves'}</p>
+                  <h3 className="ev-section-title">Moves ({gameMoves.length} plies)</h3>
                 </div>
                 <button
                   type="button"
@@ -661,12 +779,12 @@ function EventDetail({ tourId }) {
               </div>
               <div className="ev-moves-list">
                 <MoveList
-                  moves={analysisMoves}
+                  moves={gameMoves}
                   activeIndex={safePly}
                   onMoveClick={(idx) => setBoardPly(idx)}
                 />
               </div>
-              <p className="ev-hint">Arrow keys to step through · Esc returns to the live position</p>
+              <p className="ev-hint">Use arrow keys or buttons to step through moves · Esc returns to live position</p>
             </section>
           )}
         </div>

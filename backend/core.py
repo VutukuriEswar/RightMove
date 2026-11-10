@@ -292,6 +292,7 @@ async def create_indexes():
     await db.broadcast_tracked_tours.create_index("tour_id", unique=True)
     await db.broadcast_tracked_tours.create_index("last_seen")
     await db.broadcast_round_scans.create_index("round_id", unique=True)
+    await db.broadcast_event_analysis_state.create_index("tour_id", unique=True)
 
 
 # Defines API request and response schemas

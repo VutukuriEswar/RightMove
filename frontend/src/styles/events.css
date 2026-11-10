@@ -1335,3 +1335,219 @@
     display: none;
   }
 }
+
+.ev-section-search-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  background: rgba(28, 16, 8, 0.7);
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.ev-search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.ev-search-icon {
+  position: absolute;
+  left: 12px;
+  font-size: 0.95rem;
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.ev-search-input {
+  width: 100%;
+  padding: 10px 36px 10px 38px;
+  border-radius: 8px;
+  background: rgba(14, 9, 4, 0.75);
+  border: 1px solid rgba(212, 175, 55, 0.25);
+  color: #FFF;
+  font-family: 'Cinzel', serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.ev-search-input:focus {
+  border-color: var(--royal-gold, #D4AF37);
+  box-shadow: 0 0 12px rgba(212, 175, 55, 0.35);
+}
+
+.ev-search-clear {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: rgba(212, 175, 55, 0.75);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.ev-search-clear:hover {
+  color: #FFF;
+  transform: scale(1.15);
+}
+
+.ev-search-count {
+  font-size: 0.76rem;
+  color: rgba(212, 175, 55, 0.85);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.ev-move-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(28, 16, 8, 0.7);
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 8px;
+  padding: 3px 6px;
+}
+
+.ev-nav-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--royal-gold, #D4AF37);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.ev-nav-btn:hover:not(:disabled) {
+  background: rgba(212, 175, 55, 0.2);
+  border-color: var(--royal-gold, #D4AF37);
+  transform: scale(1.08);
+}
+
+.ev-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.ev-outcome-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.88rem;
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  background: rgba(28, 16, 8, 0.85);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.ev-outcome-white,
+.ev-outcome-black {
+  background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(46, 125, 50, 0.22));
+  border-color: rgba(212, 175, 55, 0.65);
+  color: #FFF;
+}
+
+.ev-outcome-draw {
+  background: linear-gradient(135deg, rgba(212, 175, 55, 0.12), rgba(120, 144, 156, 0.22));
+  border-color: rgba(176, 190, 197, 0.5);
+  color: #ECEFF1;
+}
+
+.ev-outcome-live {
+  background: linear-gradient(135deg, rgba(192, 57, 43, 0.25), rgba(28, 16, 8, 0.9));
+  border-color: rgba(192, 57, 43, 0.7);
+  color: #FFCDD2;
+}
+
+.ev-crown {
+  margin-right: 4px;
+  font-size: 0.9rem;
+  filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.8));
+}
+
+.ev-game-winner-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.03em;
+}
+
+.ev-winner-white,
+.ev-winner-black {
+  background: rgba(212, 175, 55, 0.2);
+  border: 1px solid rgba(212, 175, 55, 0.55);
+  color: var(--royal-gold, #D4AF37);
+}
+
+.ev-winner-draw {
+  background: rgba(144, 164, 174, 0.18);
+  border: 1px solid rgba(144, 164, 174, 0.4);
+  color: #CFD8DC;
+}
+
+.ev-winner-live {
+  background: rgba(192, 57, 43, 0.22);
+  border: 1px solid rgba(192, 57, 43, 0.55);
+  color: #FFCDD2;
+}
+
+.ev-game-player.is-winner .ev-game-name {
+  color: var(--royal-gold, #D4AF37);
+  font-weight: 700;
+}
+
+.ev-player-card.is-winner-card {
+  border-color: rgba(212, 175, 55, 0.55);
+  background: linear-gradient(135deg, rgba(28, 16, 8, 0.85), rgba(212, 175, 55, 0.12));
+}
+
+.ev-board-result-badge.is-winner {
+  color: var(--royal-gold, #D4AF37);
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.4);
+}
+
+.ev-analysis-progress-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(28, 16, 8, 0.8);
+  border: 1px solid rgba(212, 175, 55, 0.45);
+  border-radius: 999px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.74rem;
+  color: var(--royal-gold, #D4AF37);
+  letter-spacing: 0.04em;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.ev-analysis-spark {
+  animation: evPulse 1.8s infinite;
+  font-size: 0.85rem;
+}
+

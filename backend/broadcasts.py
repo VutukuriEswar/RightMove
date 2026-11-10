@@ -503,6 +503,7 @@ async def get_round(tour_id: str, round_id: str) -> dict:
         data = await _get_json(f"/api/broadcast/{tour_slug}/{round_slug}/{round_id}")
         detail = _norm_round_detail(data)
         detail["event"] = event
+        await _enrich_games_with_pgn(round_id, detail.get("games") or [])
         return detail
 
     return await _cached(f"round:{tour_id}:{round_id}", 10.0, _fetch)
@@ -519,6 +520,87 @@ async def get_round_pgn(round_id: str) -> str:
         )
 
     return await _cached(f"pgn:{round_id}", 20.0, _fetch)
+
+
+# Extracts game identifier from PGN game headers
+def _pgn_game_id(game: chess.pgn.Game) -> Optional[str]:
+    url = game.headers.get("GameURL") or game.headers.get("Site") or ""
+    path = url.split("?")[0].split("#")[0].rstrip("/")
+    match = re.search(r"/([A-Za-z0-9]{8})$", path)
+    return match.group(1) if match else None
+
+
+# Extracts full ply sequence from PGN game with clocks and evaluations
+def _extract_pgn_moves(game: chess.pgn.Game) -> list[dict]:
+    board = game.board()
+    moves = []
+    ply = 0
+    for node in game.mainline():
+        try:
+            move = node.move
+            san = board.san(move)
+            uci = move.uci()
+            is_white = board.turn == chess.WHITE
+            comment = (node.comment or "").strip()
+            clk_match = re.search(r"\[%clk\s+([0-9:]+)\]", comment)
+            clock_str = clk_match.group(1) if clk_match else None
+            board.push(move)
+            ply += 1
+            moves.append({
+                "ply": ply,
+                "san": san,
+                "uci": uci,
+                "is_white": is_white,
+                "fen_after": board.fen(),
+                "clock_str": clock_str,
+            })
+        except Exception:
+            break
+    return moves
+
+
+# Enriches round games list with full moves parsed from round PGN
+async def _enrich_games_with_pgn(round_id: str, games: list[dict]):
+    if not games or not round_id:
+        return
+    try:
+        pgn_text = await get_round_pgn(round_id)
+        if not pgn_text:
+            return
+        stream = io.StringIO(pgn_text)
+        pgn_games_by_id: dict[str, chess.pgn.Game] = {}
+        pgn_games_list: list[chess.pgn.Game] = []
+        while True:
+            try:
+                g = chess.pgn.read_game(stream)
+            except Exception:
+                break
+            if g is None:
+                break
+            gid = _pgn_game_id(g)
+            if gid:
+                pgn_games_by_id[gid] = g
+            pgn_games_list.append(g)
+
+        for idx, game in enumerate(games):
+            gid = game.get("id")
+            pgn_g = pgn_games_by_id.get(gid)
+            if pgn_g is None and idx < len(pgn_games_list):
+                pgn_g = pgn_games_list[idx]
+            if pgn_g is not None:
+                moves = _extract_pgn_moves(pgn_g)
+                game["moves"] = moves
+                eco = pgn_g.headers.get("ECO")
+                opening = pgn_g.headers.get("Opening")
+                pgn_res = pgn_g.headers.get("Result")
+                if eco:
+                    game["eco"] = eco
+                if opening:
+                    game["opening"] = opening
+                if pgn_res and pgn_res in ("1-0", "0-1", "1/2-1/2"):
+                    game["result"] = pgn_res
+    except Exception as exc:
+        logger.debug("[broadcasts] could not enrich games with PGN: %s", exc)
 
 
 # Section broadcasts/queue
@@ -607,6 +689,7 @@ async def enqueue_game(
     tour_id: Optional[str] = None,
     *,
     priority: int = 1,
+    is_live: bool = False,
     requested_by: Optional[str] = None,
     pgn_text: Optional[str] = None,
 ) -> dict:
@@ -616,23 +699,35 @@ async def enqueue_game(
         {"round_id": round_id, "game_id": game_id},
         {"finished": 1, "ply_count": 1},
     )
-    if existing and existing.get("finished"):
+    if existing and existing.get("finished") and not is_live:
         return {"status": "done", "round_id": round_id, "game_id": game_id}
 
     queued = await db.broadcast_analysis_queue.find_one(
         {"round_id": round_id, "game_id": game_id},
-        {"status": 1},
+        {"status": 1, "priority": 1},
     )
     if queued and queued.get("status") in ("queued", "running"):
+        if int(priority) < int(queued.get("priority", 10)):
+            await db.broadcast_analysis_queue.update_one(
+                {"round_id": round_id, "game_id": game_id},
+                {"$set": {"priority": int(priority), "is_live": bool(is_live), "updated_at": now}},
+            )
         return {
             "status": queued.get("status"),
             "round_id": round_id,
             "game_id": game_id,
         }
+    if is_live and queued and queued.get("status") == "done":
+        await db.broadcast_analysis_queue.update_one(
+            {"round_id": round_id, "game_id": game_id},
+            {"$set": {"status": "queued", "priority": int(priority), "is_live": True, "updated_at": now}},
+        )
+        return {"status": "queued", "round_id": round_id, "game_id": game_id}
 
     set_fields = {
         "status": "queued",
         "priority": int(priority),
+        "is_live": bool(is_live),
         "requested_by": requested_by,
         "auto": requested_by is None and pgn_text is None,
         "updated_at": now,
@@ -641,11 +736,10 @@ async def enqueue_game(
         "round_id": round_id,
         "game_id": game_id,
         "created_at": now,
+        "attempts": 0,
     }
     if requested_by:
         set_fields["attempts"] = 0
-    else:
-        insert_fields["attempts"] = 0
     if tour_id:
         set_fields["tour_id"] = tour_id
     if pgn_text:
@@ -685,6 +779,165 @@ async def enqueue_round_games(round_detail: dict, priority: int = 1, max_games: 
         if result.get("status") == "queued":
             count += 1
     return count
+
+
+# Boosts priority of selected broadcast game
+async def prioritize_game_analysis(
+    tour_id: Optional[str],
+    round_id: str,
+    game_id: str,
+    is_live: bool = False,
+) -> dict:
+    round_id = _validate_id(round_id, "round id")
+    game_id = _validate_id(game_id, "game id")
+    prio = 1 if is_live else 2
+    return await enqueue_game(
+        round_id,
+        game_id,
+        tour_id,
+        priority=prio,
+        is_live=is_live,
+    )
+
+
+_event_analysis_locks: dict[str, asyncio.Lock] = {}
+_event_analysis_locks_guard = asyncio.Lock()
+
+
+# Acquires lock for synchronizing tournament analysis enrollment
+async def _event_lock_for(tour_id: str) -> asyncio.Lock:
+    async with _event_analysis_locks_guard:
+        lock = _event_analysis_locks.get(tour_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _event_analysis_locks[tour_id] = lock
+        return lock
+
+
+# Enqueues all matches of all rounds for a broadcast tournament
+async def enqueue_full_event_analysis(tour_id: str) -> dict:
+    tour_id = _validate_id(tour_id, "tournament id")
+    db = get_db()
+    existing = await db.broadcast_event_analysis_state.find_one({"tour_id": tour_id})
+    if existing and existing.get("status") in ("queued", "in_progress", "completed"):
+        return {"status": existing.get("status"), "tour_id": tour_id, "deduped": True}
+
+    lock = await _event_lock_for(tour_id)
+    async with lock:
+        existing = await db.broadcast_event_analysis_state.find_one({"tour_id": tour_id})
+        if existing and existing.get("status") in ("queued", "in_progress", "completed"):
+            return {"status": existing.get("status"), "tour_id": tour_id, "deduped": True}
+
+        now = datetime.now(timezone.utc)
+        await db.broadcast_event_analysis_state.update_one(
+            {"tour_id": tour_id},
+            {
+                "$set": {
+                    "tour_id": tour_id,
+                    "status": "queued",
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "created_at": now,
+                    "total_rounds": 0,
+                    "total_games": 0,
+                    "completed_games": 0,
+                },
+            },
+            upsert=True,
+        )
+        asyncio.create_task(
+            _populate_event_analysis_queue(tour_id),
+            name=f"populate-event-{tour_id}",
+        )
+        return {"status": "queued", "tour_id": tour_id, "deduped": False}
+
+
+# Populates analysis queue with all games from all rounds of tournament
+async def _populate_event_analysis_queue(tour_id: str):
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    try:
+        await db.broadcast_event_analysis_state.update_one(
+            {"tour_id": tour_id},
+            {"$set": {"status": "in_progress", "updated_at": now}},
+        )
+        event = await get_tournament(tour_id)
+        rounds = event.get("rounds") or []
+        total_games = 0
+        for round_meta in rounds:
+            round_id = round_meta.get("id")
+            if not round_id:
+                continue
+            try:
+                detail = await get_round(tour_id, round_id)
+                games = detail.get("games") or []
+                for game in games:
+                    game_id = game.get("id")
+                    if not game_id:
+                        continue
+                    total_games += 1
+                    is_live = game.get("result") == "*"
+                    prio = 1 if is_live else 10
+                    await enqueue_game(
+                        round_id,
+                        game_id,
+                        tour_id,
+                        priority=prio,
+                        is_live=is_live,
+                    )
+            except Exception as exc:
+                logger.warning("[broadcasts] could not queue games for round %s: %s", round_id, exc)
+
+        await db.broadcast_event_analysis_state.update_one(
+            {"tour_id": tour_id},
+            {
+                "$set": {
+                    "total_rounds": len(rounds),
+                    "total_games": total_games,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        logger.info("[broadcasts] queued %d games across %d rounds for tour %s", total_games, len(rounds), tour_id)
+    except Exception as exc:
+        logger.error("[broadcasts] failed populating queue for tour %s: %s", tour_id, exc)
+
+
+# Reports tournament analysis progress and completion status
+async def event_analysis_progress(tour_id: str) -> dict:
+    tour_id = _validate_id(tour_id, "tournament id")
+    db = get_db()
+    state = await db.broadcast_event_analysis_state.find_one({"tour_id": tour_id})
+    if not state:
+        return {"status": "none", "tour_id": tour_id}
+    completed_count = await db.broadcast_analyses.count_documents({"tour_id": tour_id})
+    queued_count = await db.broadcast_analysis_queue.count_documents(
+        {"tour_id": tour_id, "status": "queued"}
+    )
+    running_count = await db.broadcast_analysis_queue.count_documents(
+        {"tour_id": tour_id, "status": "running"}
+    )
+    total = state.get("total_games") or (completed_count + queued_count + running_count)
+    is_done = total > 0 and completed_count >= total
+    status_str = "completed" if is_done else state.get("status", "in_progress")
+    if is_done and state.get("status") != "completed":
+        try:
+            await db.broadcast_event_analysis_state.update_one(
+                {"tour_id": tour_id},
+                {"$set": {"status": "completed", "updated_at": datetime.now(timezone.utc)}},
+            )
+        except Exception:
+            pass
+    return {
+        "status": status_str,
+        "tour_id": tour_id,
+        "total_games": total,
+        "completed_games": completed_count,
+        "queued_games": queued_count,
+        "running_games": running_count,
+        "total_rounds": state.get("total_rounds", 0),
+    }
 
 
 # Returns cached analysis or queue status for game
@@ -763,14 +1016,6 @@ def _engine_path() -> str:
     if not path.is_absolute():
         path = (BACKEND_DIR / path).resolve()
     return str(path)
-
-
-# Extracts game identifier from PGN game headers
-def _pgn_game_id(game: chess.pgn.Game) -> Optional[str]:
-    url = game.headers.get("GameURL") or game.headers.get("Site") or ""
-    path = url.split("?")[0].split("#")[0].rstrip("/")
-    match = re.search(r"/([A-Za-z0-9]{8})$", path)
-    return match.group(1) if match else None
 
 
 # Locates game matching identifier within PGN string
@@ -1131,7 +1376,7 @@ class BroadcastAnalysisWorker:
                 job = await db.broadcast_analysis_queue.find_one_and_update(
                     query,
                     {"$set": {"status": "running", "started_at": datetime.now(timezone.utc)}},
-                    sort=[("priority", 1), ("created_at", 1)],
+                    sort=[("priority", 1), ("is_live", -1), ("created_at", 1)],
                     return_document=True,
                 )
                 if not job:
@@ -1195,6 +1440,14 @@ class BroadcastAnalysisWorker:
                     "error": None,
                 }},
             )
+            if job.get("tour_id"):
+                try:
+                    await db.broadcast_event_analysis_state.update_one(
+                        {"tour_id": job["tour_id"]},
+                        {"$inc": {"completed_games": 1}, "$set": {"updated_at": now}},
+                    )
+                except Exception:
+                    pass
             logger.info("[broadcasts] analysed %s/%s (%d plies)", round_id, game_id, analysis["ply_count"])
         except Exception as exc:
             attempts = int(job.get("attempts") or 0) + 1

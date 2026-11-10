@@ -56,14 +56,17 @@ from broadcasts import (
     BroadcastError,
     analysis_status as broadcast_analysis_status,
     analyze_position_for_broadcast,
+    enqueue_full_event_analysis as broadcast_enqueue_full_event,
     enqueue_game as broadcast_enqueue_game,
     enqueue_round_games as broadcast_enqueue_round_games,
+    event_analysis_progress as broadcast_event_analysis_progress,
     get_round as broadcast_get_round,
     get_round_analysis_map as broadcast_analysis_map,
     get_round_pgn as broadcast_get_round_pgn,
     get_tournament as broadcast_get_tournament,
     list_live as broadcast_list_live,
     list_top as broadcast_list_top,
+    prioritize_game_analysis as broadcast_prioritize_game,
     public_analysis as broadcast_public_analysis,
     search_events as broadcast_search_events,
     track_tour as broadcast_track_tour,
@@ -3546,6 +3549,14 @@ class BroadcastImportRequest(BaseModel):
     pgn: str
 
 
+# Defines broadcast game prioritization request schema
+class BroadcastPrioritizeRequest(BaseModel):
+    tour_id: Optional[str] = None
+    round_id: str
+    game_id: str
+    is_live: bool = False
+
+
 # Returns free live/upcoming/recent broadcasts
 @broadcasts_router.get("/top")
 async def broadcasts_top(page: int = 1):
@@ -3584,9 +3595,36 @@ async def broadcasts_tournament(tour_id: str):
     try:
         event = await broadcast_get_tournament(tour_id)
         await broadcast_track_tour(event)
+        try:
+            asyncio.create_task(broadcast_enqueue_full_event(tour_id))
+        except Exception:
+            pass
         return event
     except BroadcastError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+# Returns tournament analysis progress and status
+@broadcasts_router.get("/tournament/{tour_id}/analysis-progress")
+async def broadcasts_tournament_progress(tour_id: str):
+    try:
+        return await broadcast_event_analysis_progress(tour_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Prioritizes analysis of selected broadcast game
+@broadcasts_router.post("/prioritize")
+async def broadcasts_prioritize(body: BroadcastPrioritizeRequest):
+    try:
+        return await broadcast_prioritize_game(
+            body.tour_id,
+            body.round_id,
+            body.game_id,
+            body.is_live,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Returns one round with live game states and cached analysis summaries

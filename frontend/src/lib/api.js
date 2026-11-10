@@ -219,6 +219,15 @@ export const broadcastsApi = {
   analyzePosition: (fen, multipv = 3) =>
     api.post('/broadcasts/analyze-position', { fen, multipv }),
   importPgn: (pgn) => api.post('/broadcasts/import-pgn', { pgn }),
+  prioritize: (tourId, roundId, gameId, isLive = false) =>
+    api.post('/broadcasts/prioritize', {
+      tour_id: tourId,
+      round_id: roundId,
+      game_id: gameId,
+      is_live: isLive,
+    }),
+  tournamentProgress: (tourId) =>
+    api.get(`/broadcasts/tournament/${encodeURIComponent(tourId)}/analysis-progress`),
 };
 
 const WS_BASE = (process.env.REACT_APP_WS_URL || 'ws://localhost:8000');
