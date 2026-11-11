@@ -11,6 +11,7 @@ import {
   gameResultClass,
   lastMoveSquares,
   parseClockStrToMs,
+  parseInitialTimeControlMs,
 } from '../lib/broadcastUtils';
 import { uciToSquares } from '../lib/chessUtils';
 import Board2D from '../components/board/Board2D';
@@ -404,7 +405,11 @@ function EventDetail({ tourId }) {
     const title = analysis?.headers?.white_title || selectedGame?.white_title;
     const rating = analysis?.headers?.white_elo || selectedGame?.white_rating;
     const fed = selectedGame?.white_fed;
-    const avatar = analysis?.headers?.white_avatar || selectedGame?.white_avatar;
+    const rawAvatar =
+      analysis?.headers?.white_avatar ||
+      selectedGame?.white_avatar ||
+      (selectedGame?.white_fide_id ? broadcastsApi.playerAvatarUrl(selectedGame.white_fide_id) : null);
+    const avatar = broadcastsApi.avatarUrl(rawAvatar);
     const clockMs = selectedGame?.white_clock_ms;
     const res = selectedGame?.result;
     let resultText = '';
@@ -430,7 +435,11 @@ function EventDetail({ tourId }) {
     const title = analysis?.headers?.black_title || selectedGame?.black_title;
     const rating = analysis?.headers?.black_elo || selectedGame?.black_rating;
     const fed = selectedGame?.black_fed;
-    const avatar = analysis?.headers?.black_avatar || selectedGame?.black_avatar;
+    const rawAvatar =
+      analysis?.headers?.black_avatar ||
+      selectedGame?.black_avatar ||
+      (selectedGame?.black_fide_id ? broadcastsApi.playerAvatarUrl(selectedGame.black_fide_id) : null);
+    const avatar = broadcastsApi.avatarUrl(rawAvatar);
     const clockMs = selectedGame?.black_clock_ms;
     const res = selectedGame?.result;
     let resultText = '';
@@ -462,6 +471,55 @@ function EventDetail({ tourId }) {
     return null;
   }, [safePly, currentMove, isLiveGame, boardFen]);
 
+  const getPlayerClockDisplay = useCallback((playerColor) => {
+    const isWhite = playerColor === 'white';
+    if (safePly >= 0 && gameMoves.length > 0) {
+      for (let i = safePly; i >= 0; i -= 1) {
+        const m = gameMoves[i];
+        if (m && m.is_white === isWhite && m.clock_str) {
+          const ms = parseClockStrToMs(m.clock_str);
+          return {
+            type: 'static',
+            display: formatBroadcastClock(ms) || m.clock_str,
+          };
+        }
+      }
+      const initialMs = parseInitialTimeControlMs(event?.time_control);
+      if (initialMs) {
+        return { type: 'static', display: formatBroadcastClock(initialMs) };
+      }
+      return { type: 'static', display: '--:--' };
+    }
+
+    const liveMs = isWhite ? selectedGame?.white_clock_ms : selectedGame?.black_clock_ms;
+    const isTurn = activeTurnColor === playerColor;
+    if (liveMs != null) {
+      if (isTurn && isLiveGame && safePly < 0) {
+        return { type: 'live', ms: liveMs };
+      }
+      return { type: 'static', display: formatBroadcastClock(liveMs) };
+    }
+
+    if (gameMoves.length > 0) {
+      for (let i = gameMoves.length - 1; i >= 0; i -= 1) {
+        const m = gameMoves[i];
+        if (m && m.is_white === isWhite && m.clock_str) {
+          const ms = parseClockStrToMs(m.clock_str);
+          return {
+            type: 'static',
+            display: formatBroadcastClock(ms) || m.clock_str,
+          };
+        }
+      }
+    }
+
+    const initialMs = parseInitialTimeControlMs(event?.time_control);
+    if (initialMs) {
+      return { type: 'static', display: formatBroadcastClock(initialMs) };
+    }
+    return { type: 'static', display: '--:--' };
+  }, [safePly, gameMoves, selectedGame, activeTurnColor, isLiveGame, event?.time_control]);
+
   if (loading) {
     return (
       <div className="events-page page-full">
@@ -491,64 +549,68 @@ function EventDetail({ tourId }) {
   const isTopTurn = activeTurnColor === topPlayer.color;
   const isBottomTurn = activeTurnColor === bottomPlayer.color;
 
-  const renderPlayerInfo = (player, isTurn, position) => (
-    <div className={`player-info ${position}${isTurn ? ' active-turn' : ''} ev-player-card${player.isWinner ? ' is-winner-card' : ''}`}>
-      <div className="player-info-left">
-        <div className="player-avatar ev-avatar">
-          {player.avatar ? (
-            <img
-              src={player.avatar}
-              alt={player.name}
-              className="ev-avatar-img"
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-                const fb = e.currentTarget.parentElement?.querySelector('.ev-avatar-fallback');
-                if (fb) fb.style.display = 'flex';
-              }}
-            />
-          ) : null}
-          <span
-            className="ev-avatar-fallback"
-            style={{ display: player.avatar ? 'none' : 'flex' }}
-          >
-            {player.initials}
-          </span>
-        </div>
-        <div className="ev-player-meta-box">
-          <div className="ev-player-name-row">
-            {player.title && <span className="ev-player-title-pill">{player.title}</span>}
-            <span className="player-name">{player.name}</span>
-            {player.isWinner && <span className="ev-crown" title="Winner">👑</span>}
-            {player.fed && <span className="ev-player-fed-pill">{player.fed}</span>}
+  const renderPlayerInfo = (player, isTurn, position) => {
+    const clockInfo = getPlayerClockDisplay(player.color);
+
+    return (
+      <div className={`player-info ${position}${isTurn ? ' active-turn' : ''} ev-player-card${player.isWinner ? ' is-winner-card' : ''}`}>
+        <div className="player-info-left">
+          <div className="player-avatar ev-avatar">
+            {player.avatar ? (
+              <img
+                src={player.avatar}
+                alt={player.name}
+                className="ev-avatar-img"
+                crossOrigin="anonymous"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  const fb = e.currentTarget.parentElement?.querySelector('.ev-avatar-fallback');
+                  if (fb) fb.style.display = 'flex';
+                }}
+              />
+            ) : null}
+            <span
+              className="ev-avatar-fallback"
+              style={{ display: player.avatar ? 'none' : 'flex' }}
+            >
+              {player.initials}
+            </span>
           </div>
-          {player.rating && (
-            <span className="ev-player-rating-text mono">({player.rating})</span>
+          <div className="ev-player-meta-box">
+            <div className="ev-player-name-row">
+              {player.title && <span className="ev-player-title-pill">{player.title}</span>}
+              <span className="player-name">{player.name}</span>
+              {player.isWinner && <span className="ev-crown" title="Winner">👑</span>}
+              {player.fed && <span className="ev-player-fed-pill">{player.fed}</span>}
+            </div>
+            <div className="ev-player-sub-row">
+              {player.rating && (
+                <span className="ev-player-rating-text mono">{player.rating} ELO</span>
+              )}
+            </div>
+          </div>
+          {isTurn && (
+            <span className="turn-badge ev-turn-badge">
+              <span className="turn-dot" />TO MOVE
+            </span>
           )}
         </div>
-        {isTurn && (
-          <span className="turn-badge">
-            <span className="turn-dot" />TO MOVE
-          </span>
-        )}
+        <div className="player-info-right">
+          {player.resultText ? (
+            <span className={`ev-board-result-badge mono${player.isWinner ? ' is-winner' : ''}`}>{player.resultText}</span>
+          ) : null}
+          {clockInfo.type === 'live' ? (
+            <Clock ms={clockInfo.ms} active={true} formatFn={formatBroadcastClock} />
+          ) : (
+            <div className="clock">
+              <span className="clock-time mono">{clockInfo.display}</span>
+            </div>
+          )}
+        </div>
       </div>
-      <div className="player-info-right">
-        {player.resultText ? (
-          <span className={`ev-board-result-badge mono${player.isWinner ? ' is-winner' : ''}`}>{player.resultText}</span>
-        ) : null}
-        {safePly >= 0 && currentMove?.clock_str && player.color === (currentMove.is_white ? 'white' : 'black') ? (
-          <div className="clock">
-            <span className="clock-time mono">{formatBroadcastClock(parseClockStrToMs(currentMove.clock_str)) || currentMove.clock_str}</span>
-          </div>
-        ) : player.clockMs != null ? (
-          <Clock ms={player.clockMs} active={isTurn && isLiveGame && safePly < 0} formatFn={formatBroadcastClock} />
-        ) : event.time_control ? (
-          <div className="clock">
-            <span className="clock-time mono">{event.time_control}</span>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <motion.div
@@ -735,6 +797,11 @@ function EventDetail({ tourId }) {
                     >
                       Download PGN
                     </a>
+                  )}
+                  {event.time_control && (
+                    <span className="ev-tc-badge" title="Event Time Control">
+                      ⏱ {event.time_control}
+                    </span>
                   )}
                 </div>
 

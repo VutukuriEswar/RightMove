@@ -228,6 +228,13 @@ export const broadcastsApi = {
     }),
   tournamentProgress: (tourId) =>
     api.get(`/broadcasts/tournament/${encodeURIComponent(tourId)}/analysis-progress`),
+  avatarUrl: (path) => {
+    if (!path) return null;
+    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) return path;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return `${BASE_URL}${cleanPath}`;
+  },
+  playerAvatarUrl: (fideId) => `${BASE_URL}/broadcasts/player-avatar/${encodeURIComponent(fideId)}`,
 };
 
 const WS_BASE = (process.env.REACT_APP_WS_URL || 'ws://localhost:8000');

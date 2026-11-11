@@ -51,7 +51,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from broadcasts import (
     BroadcastError,
     analysis_status as broadcast_analysis_status,
@@ -60,6 +60,7 @@ from broadcasts import (
     enqueue_game as broadcast_enqueue_game,
     enqueue_round_games as broadcast_enqueue_round_games,
     event_analysis_progress as broadcast_event_analysis_progress,
+    get_player_avatar as broadcast_get_player_avatar,
     get_round as broadcast_get_round,
     get_round_analysis_map as broadcast_analysis_map,
     get_round_pgn as broadcast_get_round_pgn,
@@ -3625,6 +3626,22 @@ async def broadcasts_prioritize(body: BroadcastPrioritizeRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Returns player profile avatar photo image
+@broadcasts_router.get("/player-avatar/{fide_id}")
+async def broadcasts_player_avatar(fide_id: str):
+    data, media = await broadcast_get_player_avatar(fide_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    return Response(
+        content=data,
+        media_type=media,
+        headers={
+            "Cache-Control": "public, max-age=604800, immutable",
+            "Content-Type": media,
+        },
+    )
 
 
 # Returns one round with live game states and cached analysis summaries

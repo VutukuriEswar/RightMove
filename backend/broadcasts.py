@@ -1,5 +1,6 @@
 # Provides free live chess broadcasts from Lichess and local Stockfish analysis
 import asyncio
+import base64
 import io
 import json
 import logging
@@ -289,8 +290,8 @@ def _norm_clock_ms(value) -> Optional[int]:
 # Returns player avatar photo URL if available
 def _player_avatar_url(name: str, fide_id: Optional[str] = None) -> Optional[str]:
     fid = (fide_id or "").strip()
-    if fid:
-        return f"https://ratings.fide.com/photos/players/a/{fid}.jpg"
+    if fid and fid.isdigit():
+        return f"/broadcasts/player-avatar/{fid}"
     clean = re.sub(r"[^a-zA-Z\s]", "", (name or "")).lower()
     famous = {
         "carlsen": "1503014",
@@ -314,7 +315,22 @@ def _player_avatar_url(name: str, fide_id: Optional[str] = None) -> Optional[str
         "keymer": "12940690",
         "rapport": "738590",
         "dubov": "24126055",
-        "niemann": "30956242",
+        "niemann": "2093596",
+        "maghsoodloo": "12539929",
+        "tabatabaei": "12521213",
+        "mamedyarov": "13401319",
+        "grischuk": "4126025",
+        "radjabov": "13400924",
+        "karjakin": "14109603",
+        "svidler": "4102142",
+        "kasparov": "4100018",
+        "kramnik": "4101588",
+        "fischer": "2000013",
+        "tal": "4100026",
+        "spassky": "4100034",
+        "petrosian": "4100042",
+        "smyslov": "4100050",
+        "botvinnik": "4100069",
         "ju wenjun": "8603006",
         "lei tingjie": "8605114",
         "humpy": "5006885",
@@ -323,11 +339,96 @@ def _player_avatar_url(name: str, fide_id: Optional[str] = None) -> Optional[str
         "deshmukh": "35015095",
         "agrawal": "35008544",
         "dronavalli": "5015197",
+        "vaishali": "25072782",
+        "kosteniuk": "4128125",
+        "muzychuk": "14111330",
+        "tan zhongyi": "8603642",
     }
     for key, fid_match in famous.items():
         if key in clean:
-            return f"https://ratings.fide.com/photos/players/a/{fid_match}.jpg"
+            return f"/broadcasts/player-avatar/{fid_match}"
     return None
+
+
+_avatar_cache: dict[str, Optional[bytes]] = {}
+_avatar_lock = asyncio.Lock()
+
+
+# Fetches and caches player profile photo image bytes from FIDE
+async def get_player_avatar(fide_id: str) -> tuple[Optional[bytes], str]:
+    fide_id = (fide_id or "").strip()
+    if not fide_id.isdigit():
+        return None, "image/jpeg"
+    if fide_id in _avatar_cache:
+        data = _avatar_cache[fide_id]
+        if not data:
+            return None, "image/jpeg"
+        media = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
+        return data, media
+
+    try:
+        db = get_db()
+        doc = await db.broadcast_player_avatars.find_one({"fide_id": fide_id})
+        if doc and doc.get("image_bytes"):
+            data = bytes(doc["image_bytes"])
+            _avatar_cache[fide_id] = data
+            media = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
+            return data, media
+        if doc and doc.get("not_found"):
+            _avatar_cache[fide_id] = None
+            return None, "image/jpeg"
+    except Exception:
+        pass
+
+    async with _avatar_lock:
+        if fide_id in _avatar_cache:
+            data = _avatar_cache[fide_id]
+            if not data:
+                return None, "image/jpeg"
+            media = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
+            return data, media
+        try:
+            url = f"https://ratings.fide.com/profile/{fide_id}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            }
+            client = _http()
+            resp = await client.get(url, headers=headers, timeout=8.0, follow_redirects=True)
+            if resp.status_code == 200:
+                m = re.search(r'<img[^>]+class="profile-top__photo"[^>]+src="data:image/[^;]+;base64,([^"]+)"', resp.text)
+                if not m:
+                    m = re.search(r'<img[^>]+src="data:image/[^;]+;base64,([^"]+)"[^>]+class="profile-top__photo"', resp.text)
+                if m:
+                    raw_b64 = m.group(1)
+                    img_bytes = base64.b64decode(raw_b64)
+                    _avatar_cache[fide_id] = img_bytes
+                    media = "image/png" if img_bytes.startswith(b"\x89PNG") else "image/jpeg"
+                    try:
+                        db = get_db()
+                        await db.broadcast_player_avatars.update_one(
+                            {"fide_id": fide_id},
+                            {"$set": {"fide_id": fide_id, "image_bytes": img_bytes, "updated_at": datetime.now(timezone.utc)}},
+                            upsert=True,
+                        )
+                    except Exception:
+                        pass
+                    return img_bytes, media
+
+            _avatar_cache[fide_id] = None
+            try:
+                db = get_db()
+                await db.broadcast_player_avatars.update_one(
+                    {"fide_id": fide_id},
+                    {"$set": {"fide_id": fide_id, "not_found": True, "updated_at": datetime.now(timezone.utc)}},
+                    upsert=True,
+                )
+            except Exception:
+                pass
+            return None, "image/jpeg"
+        except Exception as exc:
+            logger.warning("[broadcasts] could not fetch FIDE avatar for %s: %s", fide_id, exc)
+            return None, "image/jpeg"
 
 
 # Normalizes individual broadcast game dictionary
@@ -530,6 +631,22 @@ def _pgn_game_id(game: chess.pgn.Game) -> Optional[str]:
     return match.group(1) if match else None
 
 
+# Parses clock string formatted as H:MM:SS or MM:SS to milliseconds
+def _parse_clock_str_ms(clock_str: str) -> Optional[int]:
+    if not clock_str or not isinstance(clock_str, str):
+        return None
+    parts = clock_str.strip().split(":")
+    try:
+        nums = [int(p) for p in parts]
+        if len(nums) == 3:
+            return (nums[0] * 3600 + nums[1] * 60 + nums[2]) * 1000
+        if len(nums) == 2:
+            return (nums[0] * 60 + nums[1]) * 1000
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
 # Extracts full ply sequence from PGN game with clocks and evaluations
 def _extract_pgn_moves(game: chess.pgn.Game) -> list[dict]:
     board = game.board()
@@ -593,12 +710,38 @@ async def _enrich_games_with_pgn(round_id: str, games: list[dict]):
                 eco = pgn_g.headers.get("ECO")
                 opening = pgn_g.headers.get("Opening")
                 pgn_res = pgn_g.headers.get("Result")
+                w_fide = pgn_g.headers.get("WhiteFideId")
+                b_fide = pgn_g.headers.get("BlackFideId")
                 if eco:
                     game["eco"] = eco
                 if opening:
                     game["opening"] = opening
                 if pgn_res and pgn_res in ("1-0", "0-1", "1/2-1/2"):
                     game["result"] = pgn_res
+                if w_fide and not game.get("white_fide_id"):
+                    game["white_fide_id"] = str(w_fide).strip()
+                    game["white_avatar"] = _player_avatar_url(game.get("white"), game["white_fide_id"])
+                if b_fide and not game.get("black_fide_id"):
+                    game["black_fide_id"] = str(b_fide).strip()
+                    game["black_avatar"] = _player_avatar_url(game.get("black"), game["black_fide_id"])
+                w_clk = None
+                b_clk = None
+                for m in moves:
+                    if m.get("clock_str"):
+                        if m.get("is_white"):
+                            w_clk = m["clock_str"]
+                        else:
+                            b_clk = m["clock_str"]
+                if w_clk:
+                    game["white_clock_str"] = w_clk
+                    ms = _parse_clock_str_ms(w_clk)
+                    if ms is not None:
+                        game["white_clock_ms"] = ms
+                if b_clk:
+                    game["black_clock_str"] = b_clk
+                    ms = _parse_clock_str_ms(b_clk)
+                    if ms is not None:
+                        game["black_clock_ms"] = ms
     except Exception as exc:
         logger.debug("[broadcasts] could not enrich games with PGN: %s", exc)
 

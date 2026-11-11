@@ -130,3 +130,25 @@ export function parseClockStrToMs(str) {
   }
   return null;
 }
+
+export function parseInitialTimeControlMs(str) {
+  if (!str || typeof str !== 'string') return null;
+  const s = str.trim().toLowerCase();
+  const hourMatch = s.match(/(\d+)\s*(?:hours?|hrs?|h)\b/);
+  if (hourMatch) {
+    return parseInt(hourMatch[1], 10) * 3600 * 1000;
+  }
+  const minMatch = s.match(/(\d+)\s*(?:minutes?|mins?|m)\b/);
+  if (minMatch) {
+    return parseInt(minMatch[1], 10) * 60 * 1000;
+  }
+  const plusMatch = s.match(/^(\d+)\s*\+\s*(\d+)/);
+  if (plusMatch) {
+    return parseInt(plusMatch[1], 10) * 60 * 1000;
+  }
+  const secMatch = s.match(/(\d+)\s*(?:seconds?|secs?|s)\b/);
+  if (secMatch) {
+    return parseInt(secMatch[1], 10) * 1000;
+  }
+  return null;
+}
