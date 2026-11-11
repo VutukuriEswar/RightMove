@@ -7,7 +7,7 @@ import { getTransparentPieceCellUrl } from '../../lib/boardThemes';
 import { getBoardTiles, getSquareBaseColours } from '../../lib/boardTexture';
 
 function findCheckSquares(chess) {
-  if (!chess.inCheck()) return { kingSquare: null, checkerSquares: [] };
+  if (!chess.inCheck()) return { kingSquare: null, checkerSquares: [], isCheckmate: false, kingColor: null, checkerPieceName: '' };
 
   const turn  = chess.turn();
   const board = chess.board();
@@ -24,7 +24,7 @@ function findCheckSquares(chess) {
     }
   }
 
-  if (!kingSquare) return { kingSquare: null, checkerSquares: [] };
+  if (!kingSquare) return { kingSquare: null, checkerSquares: [], isCheckmate: false, kingColor: turn, checkerPieceName: '' };
 
   const checkerSquares = [];
   try {
@@ -40,7 +40,23 @@ function findCheckSquares(chess) {
   } catch (_) {
   }
 
-  return { kingSquare, checkerSquares };
+  const pieceNames = { p: 'Pawn', n: 'Knight', b: 'Bishop', r: 'Rook', q: 'Queen', k: 'King' };
+  let checkerPieceName = 'Piece';
+  if (checkerSquares.length > 0) {
+    const cp = chess.get(checkerSquares[0]);
+    if (cp && pieceNames[cp.type]) {
+      const colName = cp.color === 'w' ? 'White' : 'Black';
+      checkerPieceName = `${colName} ${pieceNames[cp.type]}`;
+    }
+  }
+
+  return {
+    kingSquare,
+    checkerSquares,
+    isCheckmate: chess.isCheckmate(),
+    kingColor: turn,
+    checkerPieceName,
+  };
 }
 
 function buildCustomPieces(pieceVariant) {
@@ -88,7 +104,7 @@ const Board2D = memo(function Board2D({
     } catch (_) {
       return 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     }
-  }, [fen, id]);
+  }, [fen]);
   const chessRef     = useRef(new Chess(safeFen));
   const [frameSize, setFrameSize] = useState(null);
   const [selectedSquare, setSelectedSquare]     = useState(null);
@@ -156,8 +172,16 @@ const Board2D = memo(function Board2D({
     return () => ro.disconnect();
   }, []);
 
+  const currentChess = useMemo(() => {
+    try {
+      return new Chess(safeFen);
+    } catch (_) {
+      return new Chess();
+    }
+  }, [safeFen]);
+  chessRef.current = currentChess;
+
   useEffect(() => {
-    try { chessRef.current.load(safeFen); } catch (_) {}
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
       toastTimerRef.current = null;
@@ -165,7 +189,7 @@ const Board2D = memo(function Board2D({
     setCheckToast(null);
   }, [safeFen]);
 
-  const { kingSquare, checkerSquares } = findCheckSquares(chessRef.current);
+  const { kingSquare, checkerSquares, isCheckmate, kingColor, checkerPieceName } = findCheckSquares(currentChess);
 
   const squareStyles = {};
 
@@ -175,19 +199,37 @@ const Board2D = memo(function Board2D({
   }
 
   if (kingSquare) {
-    squareStyles[kingSquare] = {
-      background:
-        'radial-gradient(circle, rgba(220,20,20,0.80) 0%, rgba(139,37,0,0.45) 55%, transparent 80%)',
-    };
+    if (isCheckmate) {
+      squareStyles[kingSquare] = {
+        background: 'radial-gradient(circle, rgba(231,76,60,0.95) 0%, rgba(139,0,0,0.85) 60%, rgba(139,0,0,0.4) 90%)',
+        boxShadow: 'inset 0 0 18px rgba(255, 30, 30, 0.95), 0 0 16px rgba(255, 30, 30, 0.9)',
+        outline: '3.5px solid #FF3B30',
+        outlineOffset: '-3.5px',
+        borderRadius: '4px',
+        zIndex: 5,
+      };
+    } else {
+      squareStyles[kingSquare] = {
+        background: 'radial-gradient(circle, rgba(220,20,20,0.85) 0%, rgba(139,37,0,0.5) 60%, transparent 85%)',
+        boxShadow: 'inset 0 0 12px rgba(220, 20, 20, 0.75)',
+        outline: '2.5px solid rgba(220, 20, 20, 0.85)',
+        outlineOffset: '-2.5px',
+        borderRadius: '4px',
+      };
+    }
   }
 
   checkerSquares.forEach((sq) => {
     squareStyles[sq] = {
       ...(squareStyles[sq] || {}),
-      background:
-        'radial-gradient(circle, rgba(212,175,55,0.55) 0%, rgba(166,124,82,0.30) 65%, transparent 85%)',
-      outline: '2px solid rgba(212,175,55,0.70)',
-      outlineOffset: '-2px',
+      background: isCheckmate
+        ? 'radial-gradient(circle, rgba(212,175,55,0.95) 0%, rgba(166,124,82,0.65) 65%, transparent 85%)'
+        : 'radial-gradient(circle, rgba(212,175,55,0.7) 0%, rgba(166,124,82,0.4) 65%, transparent 85%)',
+      outline: isCheckmate ? '3.5px solid #D4AF37' : '2.5px solid rgba(212,175,55,0.85)',
+      outlineOffset: '-2.5px',
+      boxShadow: isCheckmate ? 'inset 0 0 16px rgba(212, 175, 55, 0.95), 0 0 12px rgba(212, 175, 55, 0.8)' : undefined,
+      borderRadius: '4px',
+      zIndex: 4,
     };
   });
 
@@ -364,6 +406,23 @@ const Board2D = memo(function Board2D({
           <div className="check-toast" key={checkToast} role="alert" aria-live="assertive">
             <span className="check-toast-icon">⚠</span>
             <span>Your King is in check — you must defend it!</span>
+          </div>
+        )}
+
+        {kingSquare && (
+          <div className={`board-check-strip${isCheckmate ? ' is-checkmate' : ''}`} role="alert" aria-live="polite">
+            <span className="board-check-strip-icon">{isCheckmate ? '👑' : '⚠️'}</span>
+            <span>
+              {isCheckmate ? (
+                <>
+                  <strong>Checkmate!</strong> {kingColor === 'w' ? 'White' : 'Black'} King on {kingSquare} checkmated by {checkerPieceName}{checkerSquares[0] ? ` on ${checkerSquares[0]}` : ''}
+                </>
+              ) : (
+                <>
+                  <strong>Check!</strong> {kingColor === 'w' ? 'White' : 'Black'} King on {kingSquare} checked by {checkerPieceName}{checkerSquares[0] ? ` on ${checkerSquares[0]}` : ''}
+                </>
+              )}
+            </span>
           </div>
         )}
       </div>

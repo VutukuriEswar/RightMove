@@ -212,10 +212,19 @@ label {
 .badge-mistake    { background: rgba(192,110,26,.12); color: var(--color-mistake); }
 .badge-blunder    { background: rgba(139,37,0,.12);   color: var(--color-blunder); }
 
+:root, html, body {
+  color-scheme: dark;
+}
+
+html, body, * {
+  scrollbar-width: thin;
+  scrollbar-color: #D4AF37 #0E0904;
+}
+
 *::-webkit-scrollbar,
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
 }
 
 *::-webkit-scrollbar-button,
@@ -227,7 +236,7 @@ label {
 
 *::-webkit-scrollbar-track,
 ::-webkit-scrollbar-track {
-  background: rgba(20, 12, 6, 0.85) !important;
+  background: #0E0904 !important;
   border-radius: 999px;
 }
 
@@ -235,7 +244,7 @@ label {
 ::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, rgba(212, 175, 55, 0.45), var(--royal-gold, #D4AF37), rgba(212, 175, 55, 0.45)) !important;
   border-radius: 999px;
-  border: 1px solid rgba(212, 175, 55, 0.25);
+  border: 1px solid rgba(212, 175, 55, 0.35);
 }
 
 *::-webkit-scrollbar-thumb:hover,
@@ -247,11 +256,6 @@ label {
 *::-webkit-scrollbar-corner,
 ::-webkit-scrollbar-corner {
   background: transparent !important;
-}
-
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #D4AF37 #140C06;
 }
 
 hr {

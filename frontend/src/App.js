@@ -67,6 +67,8 @@ const router = createBrowserRouter([
       { path: '/learn', element: <RequireAuth><Learn /></RequireAuth> },
       { path: '/events', element: <Events /> },
       { path: '/events/:tourId', element: <Events /> },
+      { path: '/events/:tourId/:roundSlug', element: <Events /> },
+      { path: '/events/:tourId/:roundSlug/:gameSlug', element: <Events /> },
       { path: '/admin/users', element: <RequireAdmin><AdminUsers /></RequireAdmin> },
       { path: '/admin/training', element: <RequireAdmin><AdminTraining /></RequireAdmin> },
       { path: '/shared/:id', element: <SharedReview /> },

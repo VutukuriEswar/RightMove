@@ -3699,6 +3699,7 @@ async def broadcasts_analyze_game(
             body.tour_id,
             priority=0,
             requested_by=current_user.get("username") or str(current_user["_id"]),
+            force=True,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

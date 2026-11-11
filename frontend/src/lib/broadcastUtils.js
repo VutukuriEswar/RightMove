@@ -131,8 +131,29 @@ export function parseClockStrToMs(str) {
   return null;
 }
 
+export function formatSafeClock(clockStr, fallbackMs = null) {
+  if (clockStr && typeof clockStr === 'string') {
+    const trimmed = clockStr.trim();
+    if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(trimmed)) {
+      return trimmed;
+    }
+    const ms = parseClockStrToMs(trimmed);
+    if (ms != null) {
+      const formatted = formatBroadcastClock(ms);
+      if (formatted) return formatted;
+    }
+  }
+  if (fallbackMs != null && !Number.isNaN(fallbackMs)) {
+    const formatted = formatBroadcastClock(fallbackMs);
+    if (formatted) return formatted;
+  }
+  return '--:--';
+}
+
 export function parseInitialTimeControlMs(str) {
   if (!str || typeof str !== 'string') return null;
+  const directMs = parseClockStrToMs(str);
+  if (directMs != null) return directMs;
   const s = str.trim().toLowerCase();
   const hourMatch = s.match(/(\d+)\s*(?:hours?|hrs?|h)\b/);
   if (hourMatch) {
@@ -142,7 +163,7 @@ export function parseInitialTimeControlMs(str) {
   if (minMatch) {
     return parseInt(minMatch[1], 10) * 60 * 1000;
   }
-  const plusMatch = s.match(/^(\d+)\s*\+\s*(\d+)/);
+  const plusMatch = s.match(/^(\d+)\s*[+|/]\s*(\d+)/);
   if (plusMatch) {
     return parseInt(plusMatch[1], 10) * 60 * 1000;
   }

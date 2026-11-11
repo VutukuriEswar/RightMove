@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { broadcastsApi } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
@@ -8,9 +8,9 @@ import {
   formatBroadcastClock,
   formatEventDates,
   formatRoundDate,
+  formatSafeClock,
   gameResultClass,
   lastMoveSquares,
-  parseClockStrToMs,
   parseInitialTimeControlMs,
 } from '../lib/broadcastUtils';
 import { uciToSquares } from '../lib/chessUtils';
@@ -18,7 +18,7 @@ import Board2D from '../components/board/Board2D';
 import Clock from '../components/game/Clock';
 import MoveList from '../components/game/MoveList';
 import EventCard from '../components/events/EventCard';
-import GameList from '../components/events/GameList';
+import MatchShelf from '../components/events/MatchShelf';
 import AnalysisPanel from '../components/events/AnalysisPanel';
 
 const TABS = [
@@ -49,22 +49,111 @@ function dedupe(events) {
   });
 }
 
+function parseLichessBroadcastUrl(text) {
+  if (!text || typeof text !== 'string') return null;
+  const clean = text.trim();
+  let after = null;
+  const lichessIdx = clean.indexOf('lichess.org/broadcast/');
+  if (lichessIdx !== -1) {
+    after = clean.slice(lichessIdx + 'lichess.org/broadcast/'.length);
+  } else {
+    const eventsIdx = clean.indexOf('/events/');
+    if (eventsIdx !== -1 && (clean.startsWith('http://') || clean.startsWith('https://') || clean.startsWith('/'))) {
+      after = clean.slice(eventsIdx + '/events/'.length);
+    }
+  }
+  if (!after) return null;
+  const pathOnly = after.split(/[?#]/)[0];
+  const parts = pathOnly.split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+  const tourSlug = parts[0];
+  let roundSlug = null;
+  let gameSlug = null;
+  if (parts.length === 2) {
+    roundSlug = parts[1];
+  } else if (parts.length === 3) {
+    roundSlug = parts[2] || parts[1];
+  } else if (parts.length >= 4) {
+    roundSlug = parts[2] || parts[1];
+    gameSlug = parts[3];
+  }
+  return {
+    raw: clean,
+    tourSlug,
+    roundSlug,
+    gameSlug,
+    displayTitle: tourSlug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+  };
+}
+
+class EventErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('EventErrorBoundary caught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="events-page page-full" style={{ padding: '48px 24px', textAlign: 'center' }}>
+          <div className="alert alert-error" style={{ maxWidth: 620, margin: '0 auto' }}>
+            <h3 style={{ margin: '0 0 8px 0', fontFamily: 'Playfair Display, serif', fontSize: '1.25rem' }}>Unable to load match view</h3>
+            <p style={{ margin: '0 0 16px 0', fontSize: '0.88rem', color: '#D4AF37' }}>
+              {this.state.error?.message || 'An unexpected rendering error occurred.'}
+            </p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  this.setState({ hasError: false, error: null });
+                  window.location.reload();
+                }}
+              >
+                Reload Match
+              </button>
+              <a href="/events" className="btn btn-secondary">
+                Return to Events
+              </a>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function Events() {
-  const { tourId } = useParams();
-  return tourId ? <EventDetail tourId={tourId} /> : <EventBrowser />;
+  const { tourId, roundSlug, gameSlug } = useParams();
+  return (
+    <EventErrorBoundary>
+      {tourId ? (
+        <EventDetail tourId={tourId} roundSlug={roundSlug} gameSlug={gameSlug} />
+      ) : (
+        <EventBrowser />
+      )}
+    </EventErrorBoundary>
+  );
 }
 
 function EventBrowser() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState('all');
   const [top, setTop] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [searchQueries, setSearchQueries] = useState({
-    all: '',
-    live: '',
-    completed: '',
-    upcoming: '',
-  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [remoteResults, setRemoteResults] = useState([]);
+  const [searchingRemote, setSearchingRemote] = useState(false);
 
   const loadTop = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -111,14 +200,55 @@ function EventBrowser() {
     };
   }, [top]);
 
-  const currentQuery = searchQueries[tab] || '';
-  const setTabQuery = (val) => setSearchQueries((prev) => ({ ...prev, [tab]: val }));
+  const parsedDirectUrl = useMemo(
+    () => parseLichessBroadcastUrl(searchQuery),
+    [searchQuery]
+  );
 
-  const filteredEvents = useMemo(() => {
-    const list = lists[tab] || [];
-    const q = currentQuery.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter((event) => {
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (parsedDirectUrl || q.length < 2) {
+      setRemoteResults([]);
+      setSearchingRemote(false);
+      return undefined;
+    }
+    let active = true;
+    setSearchingRemote(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await broadcastsApi.search(q);
+        if (active) {
+          setRemoteResults(res?.events || []);
+        }
+      } catch {
+        if (active) setRemoteResults([]);
+      } finally {
+        if (active) setSearchingRemote(false);
+      }
+    }, 300);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [searchQuery, parsedDirectUrl]);
+
+  const handleOpenDirect = useCallback(() => {
+    if (!parsedDirectUrl) return;
+    let target = `/events/${parsedDirectUrl.tourSlug}`;
+    if (parsedDirectUrl.roundSlug) {
+      target += `/${parsedDirectUrl.roundSlug}`;
+      if (parsedDirectUrl.gameSlug) {
+        target += `/${parsedDirectUrl.gameSlug}`;
+      }
+    }
+    navigate(target);
+  }, [parsedDirectUrl, navigate]);
+
+  const allSearchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    if (parsedDirectUrl) return [];
+    const localMatches = (lists.all || []).filter((event) => {
       const text = [
         event.name,
         event.format,
@@ -131,7 +261,28 @@ function EventBrowser() {
         .toLowerCase();
       return text.includes(q);
     });
-  }, [lists, tab, currentQuery]);
+    return dedupe([...remoteResults, ...localMatches]);
+  }, [searchQuery, parsedDirectUrl, remoteResults, lists.all]);
+
+  const filteredEvents = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) {
+      return lists[tab] || [];
+    }
+    if (parsedDirectUrl) {
+      return [];
+    }
+    if (tab === 'live') {
+      return allSearchResults.filter((e) => e.is_live || e.active_round?.ongoing);
+    }
+    if (tab === 'completed') {
+      return allSearchResults.filter((e) => e.is_finished);
+    }
+    if (tab === 'upcoming') {
+      return allSearchResults.filter((e) => e.is_upcoming);
+    }
+    return allSearchResults;
+  }, [lists, tab, searchQuery, parsedDirectUrl, allSearchResults]);
 
   const activeTabMeta = TABS.find((t) => t.id === tab) || TABS[0];
 
@@ -177,16 +328,26 @@ function EventBrowser() {
           <input
             type="text"
             className="ev-search-input interactive"
-            value={currentQuery}
-            onChange={(e) => setTabQuery(e.target.value)}
-            placeholder={`Search ${activeTabMeta.label} events by name, format, or location…`}
-            aria-label={`Search ${activeTabMeta.label} events`}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && parsedDirectUrl) {
+                e.preventDefault();
+                handleOpenDirect();
+              }
+            }}
+            placeholder={
+              parsedDirectUrl
+                ? 'Press Enter to open direct broadcast link…'
+                : 'Search all Lichess broadcasts by name, year (e.g. 2024), player, or paste URL…'
+            }
+            aria-label="Search all Lichess broadcasts"
           />
-          {currentQuery && (
+          {searchQuery && (
             <button
               type="button"
               className="ev-search-clear interactive"
-              onClick={() => setTabQuery('')}
+              onClick={() => setSearchQuery('')}
               aria-label="Clear search"
             >
               ✕
@@ -194,9 +355,49 @@ function EventBrowser() {
           )}
         </div>
         <div className="ev-search-count mono">
-          {filteredEvents.length} {filteredEvents.length === 1 ? 'event' : 'events'}
+          {searchingRemote ? (
+            <span>Searching Lichess…</span>
+          ) : searchQuery.trim() ? (
+            <span>{filteredEvents.length} on Lichess</span>
+          ) : (
+            <span>
+              {filteredEvents.length} {filteredEvents.length === 1 ? 'event' : 'events'}
+            </span>
+          )}
         </div>
       </div>
+
+      {parsedDirectUrl && (
+        <div
+          className="ev-direct-url-card interactive"
+          onClick={handleOpenDirect}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') handleOpenDirect();
+          }}
+        >
+          <div className="ev-direct-url-info">
+            <span className="ev-direct-url-badge">⚡ DIRECT LICHESS BROADCAST DETECTED</span>
+            <h3 className="ev-direct-url-title">{parsedDirectUrl.displayTitle}</h3>
+            <p className="ev-direct-url-meta">
+              {parsedDirectUrl.roundSlug ? `Round: ${parsedDirectUrl.roundSlug} · ` : ''}
+              {parsedDirectUrl.gameSlug ? `Game: ${parsedDirectUrl.gameSlug} · ` : ''}
+              Click or press Enter to open match in RightMove →
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleOpenDirect();
+            }}
+          >
+            Open Match →
+          </button>
+        </div>
+      )}
 
       <section className="ev-list-section">
         {loading && !top && <p className="ev-empty-note">Loading broadcasts…</p>}
@@ -209,17 +410,29 @@ function EventBrowser() {
           </div>
         )}
         {!loading && top && filteredEvents.length === 0 && (
-          <p className="ev-empty-note">
-            {currentQuery
-              ? `No events matched "${currentQuery}" in ${activeTabMeta.label}.`
-              : tab === 'live'
-                ? 'No broadcasts are live right now. Check the Upcoming tab or browse Completed events.'
-                : tab === 'upcoming'
-                  ? 'No upcoming broadcasts are listed yet.'
-                  : tab === 'completed'
-                    ? 'No completed broadcasts available.'
-                    : 'No broadcasts available.'}
-          </p>
+          <div className="ev-empty-search-box">
+            <p className="ev-empty-note">
+              {searchQuery.trim()
+                ? `No ${activeTabMeta.label.toLowerCase()} broadcasts matched "${searchQuery}".`
+                : tab === 'live'
+                  ? 'No broadcasts are live right now. Check the Upcoming tab or browse Completed events.'
+                  : tab === 'upcoming'
+                    ? 'No upcoming broadcasts are listed yet.'
+                    : tab === 'completed'
+                      ? 'No completed broadcasts available.'
+                      : 'No broadcasts available.'}
+            </p>
+            {searchQuery.trim() && tab !== 'all' && allSearchResults.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ marginTop: 12 }}
+                onClick={() => setTab('all')}
+              >
+                View all {allSearchResults.length} Lichess search results →
+              </button>
+            )}
+          </div>
         )}
         {filteredEvents.length > 0 && (
           <div className="ev-grid">
@@ -233,7 +446,8 @@ function EventBrowser() {
   );
 }
 
-function EventDetail({ tourId }) {
+function EventDetail({ tourId, roundSlug, gameSlug }) {
+  const navigate = useNavigate();
   const { isLoggedIn } = useAuth();
   const [event, setEvent] = useState(null);
   const [roundId, setRoundId] = useState(null);
@@ -245,7 +459,6 @@ function EventDetail({ tourId }) {
   const [analysis, setAnalysis] = useState(null);
   const [boardPly, setBoardPly] = useState(-1);
   const [flipped, setFlipped] = useState(false);
-  const [eventProgress, setEventProgress] = useState(null);
   const roundsRef = useRef(null);
 
   useEffect(() => {
@@ -262,13 +475,32 @@ function EventDetail({ tourId }) {
         if (cancelled) return;
         setEvent(data);
         const rounds = data.rounds || [];
-        let preferred = data.default_round_id;
-        if (data.is_live && data.active_round?.id) {
-          preferred = data.active_round.id;
-        } else if (data.is_finished && rounds.length) {
-          preferred = rounds[rounds.length - 1].id;
-        } else if (!preferred) {
-          preferred = data.active_round?.id || rounds[0]?.id || null;
+        let preferred = null;
+        if (roundSlug) {
+          if (/^\d+$/.test(roundSlug)) {
+            const rNum = parseInt(roundSlug, 10);
+            if (rNum >= 1 && rNum <= rounds.length) {
+              preferred = rounds[rNum - 1].id;
+            }
+          }
+          if (!preferred) {
+            const match = rounds.find(
+              (r) =>
+                r.id === roundSlug ||
+                r.slug === roundSlug ||
+                r.name?.toLowerCase().replace(/\s+/g, '-') === roundSlug.toLowerCase()
+            );
+            if (match) preferred = match.id;
+          }
+        }
+        if (!preferred) {
+          if (data.is_live && data.active_round?.id) {
+            preferred = data.active_round.id;
+          } else if (data.is_finished && rounds.length) {
+            preferred = rounds[rounds.length - 1].id;
+          } else if (!preferred) {
+            preferred = data.default_round_id || data.active_round?.id || rounds[0]?.id || null;
+          }
         }
         setRoundId(preferred);
         setLoading(false);
@@ -281,25 +513,7 @@ function EventDetail({ tourId }) {
     return () => {
       cancelled = true;
     };
-  }, [tourId]);
-
-  useEffect(() => {
-    let alive = true;
-    const fetchProgress = async () => {
-      try {
-        const prog = await broadcastsApi.tournamentProgress(tourId);
-        if (alive && prog) {
-          setEventProgress(prog);
-        }
-      } catch (_) {}
-    };
-    fetchProgress();
-    const interval = setInterval(fetchProgress, 12000);
-    return () => {
-      alive = false;
-      clearInterval(interval);
-    };
-  }, [tourId]);
+  }, [tourId, roundSlug]);
 
   const loadRound = useCallback(
     async ({ silent = false } = {}) => {
@@ -311,6 +525,16 @@ function EventDetail({ tourId }) {
         setError(null);
         setSelectedGameId((prev) => {
           const games = data.games || [];
+          if (gameSlug) {
+            if (/^\d+$/.test(gameSlug)) {
+              const gNum = parseInt(gameSlug, 10);
+              if (gNum >= 1 && gNum <= games.length) {
+                return games[gNum - 1].id;
+              }
+            }
+            const match = games.find((g) => g.id === gameSlug);
+            if (match) return match.id;
+          }
           if (prev && games.some((g) => g.id === prev)) return prev;
           const liveGame = games.find((g) => g.result === '*');
           return liveGame?.id || games[0]?.id || null;
@@ -321,8 +545,43 @@ function EventDetail({ tourId }) {
         if (!silent) setRoundLoading(false);
       }
     },
-    [roundId, tourId]
+    [roundId, tourId, gameSlug]
   );
+
+  const handleSelectRound = useCallback(
+    (rId) => {
+      setRoundId(rId);
+      const rIdx = (event?.rounds || []).findIndex((r) => r.id === rId);
+      const rSlug = rIdx >= 0 ? `${rIdx + 1}` : rId;
+      navigate(`/events/${tourId}/${rSlug}`, { replace: true });
+    },
+    [event, tourId, navigate]
+  );
+
+  const handleSelectGame = useCallback(
+    (g) => {
+      const targetId = typeof g === 'object' ? g?.id : g;
+      if (!targetId) return;
+      setSelectedGameId(targetId);
+      const rIdx = (event?.rounds || []).findIndex((r) => r.id === roundId);
+      const rSlug = rIdx >= 0 ? `${rIdx + 1}` : (roundId || '1');
+      const gIdx = (round?.games || []).findIndex((gm) => gm.id === targetId);
+      const gSlug = gIdx >= 0 ? `${gIdx + 1}` : targetId;
+      navigate(`/events/${tourId}/${rSlug}/${gSlug}`, { replace: true });
+    },
+    [event, roundId, round, tourId, navigate]
+  );
+
+  useEffect(() => {
+    if (!event || !roundId || !selectedGameId) return;
+    if (!roundSlug || !gameSlug) {
+      const rIdx = (event.rounds || []).findIndex((r) => r.id === roundId);
+      const rSlug = rIdx >= 0 ? `${rIdx + 1}` : roundId;
+      const gIdx = (round?.games || []).findIndex((gm) => gm.id === selectedGameId);
+      const gSlug = gIdx >= 0 ? `${gIdx + 1}` : selectedGameId;
+      navigate(`/events/${tourId}/${rSlug}/${gSlug}`, { replace: true });
+    }
+  }, [event, roundId, selectedGameId, round, roundSlug, gameSlug, tourId, navigate]);
 
   useEffect(() => {
     setRound(null);
@@ -366,18 +625,28 @@ function EventDetail({ tourId }) {
   useEffect(() => {
     if (!tourId || !roundId || !selectedGameId) return;
     broadcastsApi.prioritize(tourId, roundId, selectedGameId, isLiveGame).catch(() => {});
-  }, [tourId, roundId, selectedGameId, isLiveGame]);
+  }, [tourId, roundId, selectedGameId, isLiveGame, selectedGame?.moves?.length]);
 
   const gameMoves = useMemo(() => {
-    if (analysis?.moves && analysis.moves.length > 0) return analysis.moves;
-    return selectedGame?.moves || [];
+    const rawMoves = selectedGame?.moves || [];
+    const analyzed = analysis?.moves || [];
+    if (!analyzed.length) return rawMoves;
+    if (!rawMoves.length) return analyzed;
+    if (analyzed.length >= rawMoves.length) return analyzed;
+    return rawMoves.map((m, idx) => {
+      const a = analyzed[idx];
+      return a ? { ...m, ...a } : m;
+    });
   }, [analysis, selectedGame]);
 
   const safePly = boardPly >= 0 && boardPly < gameMoves.length ? boardPly : -1;
   const currentMove = safePly >= 0 ? gameMoves[safePly] : null;
-  const boardFen = currentMove?.fen_after || selectedGame?.fen || START_FEN;
-  const lastMove = currentMove
-    ? uciToSquares(currentMove.uci)
+  const activeMove = safePly >= 0
+    ? gameMoves[safePly]
+    : (gameMoves.length > 0 ? gameMoves[gameMoves.length - 1] : null);
+  const boardFen = activeMove?.fen_after || selectedGame?.fen || START_FEN;
+  const lastMove = activeMove
+    ? uciToSquares(activeMove.uci)
     : lastMoveSquares(selectedGame?.last_move);
 
   useEffect(() => {
@@ -473,22 +742,22 @@ function EventDetail({ tourId }) {
 
   const getPlayerClockDisplay = useCallback((playerColor) => {
     const isWhite = playerColor === 'white';
+    const initialMs = parseInitialTimeControlMs(event?.time_control);
+
     if (safePly >= 0 && gameMoves.length > 0) {
       for (let i = safePly; i >= 0; i -= 1) {
         const m = gameMoves[i];
         if (m && m.is_white === isWhite && m.clock_str) {
-          const ms = parseClockStrToMs(m.clock_str);
           return {
             type: 'static',
-            display: formatBroadcastClock(ms) || m.clock_str,
+            display: formatSafeClock(m.clock_str, initialMs),
           };
         }
       }
-      const initialMs = parseInitialTimeControlMs(event?.time_control);
-      if (initialMs) {
-        return { type: 'static', display: formatBroadcastClock(initialMs) };
-      }
-      return { type: 'static', display: '--:--' };
+      return {
+        type: 'static',
+        display: formatSafeClock(null, initialMs),
+      };
     }
 
     const liveMs = isWhite ? selectedGame?.white_clock_ms : selectedGame?.black_clock_ms;
@@ -497,27 +766,25 @@ function EventDetail({ tourId }) {
       if (isTurn && isLiveGame && safePly < 0) {
         return { type: 'live', ms: liveMs };
       }
-      return { type: 'static', display: formatBroadcastClock(liveMs) };
+      return { type: 'static', display: formatSafeClock(null, liveMs) };
     }
 
     if (gameMoves.length > 0) {
       for (let i = gameMoves.length - 1; i >= 0; i -= 1) {
         const m = gameMoves[i];
         if (m && m.is_white === isWhite && m.clock_str) {
-          const ms = parseClockStrToMs(m.clock_str);
           return {
             type: 'static',
-            display: formatBroadcastClock(ms) || m.clock_str,
+            display: formatSafeClock(m.clock_str, initialMs),
           };
         }
       }
     }
 
-    const initialMs = parseInitialTimeControlMs(event?.time_control);
-    if (initialMs) {
-      return { type: 'static', display: formatBroadcastClock(initialMs) };
-    }
-    return { type: 'static', display: '--:--' };
+    return {
+      type: 'static',
+      display: formatSafeClock(null, initialMs),
+    };
   }, [safePly, gameMoves, selectedGame, activeTurnColor, isLiveGame, event?.time_control]);
 
   if (loading) {
@@ -620,7 +887,23 @@ function EventDetail({ tourId }) {
       exit={{ opacity: 0 }}
       transition={{ duration: 0.35 }}
     >
-      <Link to="/events" className="ev-back">← All events</Link>
+      <div className="ev-detail-nav-row">
+        <Link to="/events" className="ev-back-btn interactive">
+          ← All events
+        </Link>
+        <div className="ev-detail-nav-actions">
+          {event.website && (
+            <a className="ev-text-btn interactive" href={event.website} target="_blank" rel="noreferrer">
+              Event site ↗
+            </a>
+          )}
+          {event.url && (
+            <a className="ev-text-btn interactive" href={event.url} target="_blank" rel="noreferrer">
+              ↗ Lichess
+            </a>
+          )}
+        </div>
+      </div>
 
       <header className="ev-detail-head">
         <div className="ev-detail-title-row">
@@ -632,79 +915,40 @@ function EventDetail({ tourId }) {
             <h1 className="ev-detail-title">{event.name}</h1>
             {meta && <p className="ev-detail-meta">{meta}</p>}
           </div>
-          <div className="ev-detail-actions">
-            {eventProgress && eventProgress.total_games > 0 && (
-              <div className="ev-analysis-progress-badge" title="Automated Stockfish Analysis Pipeline">
-                <span className="ev-analysis-spark">⚡</span>
-                <span>
-                  Analysis: {eventProgress.completed_games}/{eventProgress.total_games} games
-                  {eventProgress.status === 'completed' ? ' · Ready' : ' in progress'}
-                </span>
-              </div>
-            )}
-            {event.website && (
-              <a className="ev-text-btn interactive" href={event.website} target="_blank" rel="noreferrer">
-                Event site ↗
-              </a>
-            )}
-            {event.url && (
-              <a className="ev-text-btn interactive" href={event.url} target="_blank" rel="noreferrer">
-                Lichess ↗
-              </a>
-            )}
-          </div>
         </div>
       </header>
 
       {error && <div className="alert alert-error">{error}</div>}
 
-      {(event.rounds || []).length > 0 && (
-        <div className="ev-rounds-nav-wrap">
-          <button
-            type="button"
-            className="ev-rounds-nav-btn prev interactive"
-            aria-label="Scroll rounds left"
-            onClick={() => {
-              if (roundsRef.current) {
-                roundsRef.current.scrollBy({ left: -260, behavior: 'smooth' });
-              }
-            }}
-          >
-            ‹
-          </button>
-          <div className="ev-rounds" role="tablist" aria-label="Rounds" ref={roundsRef}>
-            {event.rounds.map((r) => (
+      <div className="ev-arena-grid">
+        <div className="ev-arena-moves-col">
+          <section className="ev-moves glass-panel">
+            <div className="ev-moves-head">
+              <div>
+                <p className="ev-kicker">{analysis ? 'Stockfish analyzed' : 'Game moves'}</p>
+                <h3 className="ev-section-title">Moves ({gameMoves.length} plies)</h3>
+              </div>
               <button
-                key={r.id}
                 type="button"
-                role="tab"
-                aria-selected={r.id === roundId}
-                className={`ev-round-chip interactive${r.id === roundId ? ' is-active' : ''}${r.ongoing ? ' is-live' : ''}`}
-                onClick={() => setRoundId(r.id)}
+                className="ev-text-btn interactive"
+                onClick={() => setBoardPly(-1)}
+                disabled={safePly < 0}
               >
-                {r.ongoing && <span className="ev-live-dot" />}
-                <span>{r.name}</span>
-                {r.starts_at && <span className="ev-round-date">{formatRoundDate(r.starts_at)}</span>}
+                Live position
               </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="ev-rounds-nav-btn next interactive"
-            aria-label="Scroll rounds right"
-            onClick={() => {
-              if (roundsRef.current) {
-                roundsRef.current.scrollBy({ left: 260, behavior: 'smooth' });
-              }
-            }}
-          >
-            ›
-          </button>
+            </div>
+            <div className="ev-moves-list">
+              <MoveList
+                moves={gameMoves}
+                activeIndex={safePly}
+                onMoveClick={(idx) => setBoardPly(idx)}
+              />
+            </div>
+            <p className="ev-hint">Use arrow keys or buttons to step through moves · Esc returns to live position</p>
+          </section>
         </div>
-      )}
 
-      <div className="ev-detail-grid">
-        <div className="ev-board-column">
+        <div className="ev-arena-board-col">
           <div className="ev-board-card glass-panel">
             {selectedGame ? (
               <>
@@ -827,60 +1071,10 @@ function EventDetail({ tourId }) {
               </p>
             )}
           </div>
-
-          {gameMoves.length > 0 && (
-            <section className="ev-moves glass-panel">
-              <div className="ev-moves-head">
-                <div>
-                  <p className="ev-kicker">{analysis ? 'Stockfish analyzed' : 'Game moves'}</p>
-                  <h3 className="ev-section-title">Moves ({gameMoves.length} plies)</h3>
-                </div>
-                <button
-                  type="button"
-                  className="ev-text-btn interactive"
-                  onClick={() => setBoardPly(-1)}
-                  disabled={safePly < 0}
-                >
-                  Live position
-                </button>
-              </div>
-              <div className="ev-moves-list">
-                <MoveList
-                  moves={gameMoves}
-                  activeIndex={safePly}
-                  onMoveClick={(idx) => setBoardPly(idx)}
-                />
-              </div>
-              <p className="ev-hint">Use arrow keys or buttons to step through moves · Esc returns to live position</p>
-            </section>
-          )}
         </div>
 
-        <div className="ev-side-column">
-          <section className="ev-games glass-panel">
-            <div className="ev-games-head">
-              <div>
-                <p className="ev-kicker">{round?.name || 'Round'}</p>
-                <h3 className="ev-section-title">Games</h3>
-              </div>
-              {round?.ongoing && (
-                <span className="ev-live-pill">
-                  <span className="ev-live-dot" /> Live
-                </span>
-              )}
-            </div>
-            {roundLoading && !round ? (
-              <p className="ev-empty-note">Loading games…</p>
-            ) : (
-              <GameList
-                games={round?.games || []}
-                selectedId={selectedGameId}
-                onSelect={(g) => setSelectedGameId(g.id)}
-              />
-            )}
-          </section>
-
-          {selectedGame && roundId && (
+        <div className="ev-arena-analysis-col">
+          {selectedGame && roundId ? (
             <AnalysisPanel
               roundId={roundId}
               gameId={selectedGame.id}
@@ -890,9 +1084,71 @@ function EventDetail({ tourId }) {
               onAnalysisLoaded={setAnalysis}
               currentPly={safePly}
               onSelectPly={setBoardPly}
+              boardFen={boardFen}
+              currentMove={activeMove}
+              whiteData={whiteData}
+              blackData={blackData}
             />
+          ) : (
+            <div className="ev-analysis-placeholder glass-panel">
+              <p className="ev-empty-note">Select a match to view Stockfish engine analysis</p>
+            </div>
           )}
         </div>
+      </div>
+
+      <div className="ev-bottom-shelves">
+        {(event.rounds || []).length > 0 && (
+          <div className="ev-rounds-nav-wrap">
+            <button
+              type="button"
+              className="ev-rounds-nav-btn prev interactive"
+              aria-label="Scroll rounds left"
+              onClick={() => {
+                if (roundsRef.current) {
+                  roundsRef.current.scrollBy({ left: -260, behavior: 'smooth' });
+                }
+              }}
+            >
+              ‹
+            </button>
+            <div className="ev-rounds" role="tablist" aria-label="Rounds" ref={roundsRef}>
+              {event.rounds.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={r.id === roundId}
+                  className={`ev-round-chip interactive${r.id === roundId ? ' is-active' : ''}${r.ongoing ? ' is-live' : ''}`}
+                  onClick={() => handleSelectRound(r.id)}
+                >
+                  {r.ongoing && <span className="ev-live-dot" />}
+                  <span>{r.name}</span>
+                  {r.starts_at && <span className="ev-round-date">{formatRoundDate(r.starts_at)}</span>}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="ev-rounds-nav-btn next interactive"
+              aria-label="Scroll rounds right"
+              onClick={() => {
+                if (roundsRef.current) {
+                  roundsRef.current.scrollBy({ left: 260, behavior: 'smooth' });
+                }
+              }}
+            >
+              ›
+            </button>
+          </div>
+        )}
+
+        <MatchShelf
+          games={round?.games || []}
+          selectedId={selectedGameId}
+          onSelect={handleSelectGame}
+          roundName={round?.name || 'Round'}
+        />
       </div>
     </motion.div>
   );

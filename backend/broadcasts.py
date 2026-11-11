@@ -551,31 +551,127 @@ async def list_live(nb: int = 20) -> list[dict]:
     return await _cached(f"live:{nb}", 15.0, _fetch)
 
 
-# Searches broadcasts by tournament name
+# Searches broadcasts directly on Lichess with multi-page querying and URL slug resolution
 async def search_events(query: str) -> list[dict]:
-    q = (query or "").strip()
-    if not q:
+    clean = (query or "").strip()
+    if not clean:
         return []
-    q = q[:80]
+    clean = clean[:120]
 
     async def _fetch():
-        params = httpx.QueryParams({"q": q})
-        data = await _get_json(f"/api/broadcast/search?{params}")
+        direct_tour = None
+        url_m = re.search(r"lichess\.org/broadcast/([^/?#]+)", clean)
+        slug_or_id = url_m.group(1) if url_m else clean
+        search_term = slug_or_id.replace("-", " ") if ("-" in slug_or_id or url_m) else clean
+
+        if ID_RE.fullmatch(slug_or_id):
+            try:
+                data = await _get_json(f"/api/broadcast/{slug_or_id}")
+                tour = data.get("tour") or {}
+                rounds = data.get("rounds") or []
+                active = next((r for r in rounds if r.get("ongoing")), None)
+                if active is None and rounds:
+                    active = rounds[-1]
+                direct_tour = _norm_event(tour, active_round=active, group=data.get("group"), rounds=rounds)
+            except Exception:
+                pass
+
+        async def _fetch_page(page_num: int):
+            try:
+                params = httpx.QueryParams({"q": search_term, "page": page_num})
+                data = await _get_json(f"/api/broadcast/search?{params}")
+                return data.get("currentPageResults") or []
+            except Exception:
+                return []
+
+        page_tasks = [_fetch_page(p) for p in (1, 2, 3, 4)]
+        pages_results = await asyncio.gather(*page_tasks)
+        raw_items = []
+        for res in pages_results:
+            raw_items.extend(res)
+
+        seen = set()
         out = []
-        for item in data.get("currentPageResults") or []:
+        if direct_tour and direct_tour.get("id"):
+            seen.add(direct_tour["id"])
+            out.append(direct_tour)
+
+        for item in raw_items:
             tour = item.get("tour") or {}
+            tid = tour.get("id")
+            if not tid or tid in seen:
+                continue
+            seen.add(tid)
             out.append(_norm_event(tour, active_round=item.get("round")))
+
+        q_lower = search_term.lower()
+        q_words = [w for w in q_lower.split() if len(w) >= 2]
+
+        def _rank(event: dict) -> int:
+            score = 0
+            name = (event.get("name") or "").lower()
+            slug = (event.get("slug") or "").lower()
+            tier = int(event.get("tier") or 0)
+            score += tier * 20
+            if "world championship" in name or "world-championship" in slug:
+                score += 150
+            if "candidates" in name:
+                score += 100
+            if slug == slug_or_id.lower() or name == q_lower:
+                score += 1000
+            elif q_lower in name or q_lower in slug:
+                score += 500
+            else:
+                for w in q_words:
+                    if len(w) >= 3 and (w in name or w in slug):
+                        score += 40
+            return score
+
+        out.sort(key=_rank, reverse=True)
         return out
 
-    return await _cached(f"search:{q.lower()}", 60.0, _fetch)
+    return await _cached(f"search:{clean.lower()}", 60.0, _fetch)
+
+
+# Resolves broadcast tournament identifier from ID or slug
+async def _resolve_tournament_id(tour_id: str) -> str:
+    clean_id = (tour_id or "").strip()
+    if not clean_id:
+        raise BroadcastError("Missing tournament identifier")
+    if ID_RE.fullmatch(clean_id):
+        return clean_id
+    if SLUG_RE.fullmatch(clean_id):
+        found = await search_events(clean_id.replace("-", " "))
+        match = next((t for t in found if t.get("slug") == clean_id or t.get("id") == clean_id), None)
+        if match and match.get("id"):
+            return match["id"]
+        if found and found[0].get("id"):
+            return found[0]["id"]
+    raise BroadcastError(f"Broadcast tournament '{tour_id}' not found")
 
 
 # Fetches tournament details and round schedule
 async def get_tournament(tour_id: str) -> dict:
-    tour_id = _validate_id(tour_id, "tournament id")
+    clean_id = await _resolve_tournament_id(tour_id)
 
     async def _fetch():
-        data = await _get_json(f"/api/broadcast/{tour_id}")
+        try:
+            data = await _get_json(f"/api/broadcast/{clean_id}")
+        except Exception:
+            if ID_RE.fullmatch(clean_id):
+                try:
+                    pgn_text = await get_round_pgn(clean_id)
+                    site_m = re.search(r'\[Site\s+"https?://lichess\.org/broadcast/([^/"]+)/', pgn_text or "")
+                    if site_m:
+                        resolved_id = await _resolve_tournament_id(site_m.group(1))
+                        data = await _get_json(f"/api/broadcast/{resolved_id}")
+                    else:
+                        raise BroadcastError(f"Tournament {clean_id} not found")
+                except Exception:
+                    raise BroadcastError(f"Tournament {clean_id} not found")
+            else:
+                raise BroadcastError(f"Tournament {clean_id} not found")
+
         tour = data.get("tour") or {}
         rounds = data.get("rounds") or []
         default_id = data.get("defaultRoundId")
@@ -586,16 +682,16 @@ async def get_tournament(tour_id: str) -> dict:
         event["default_round_id"] = default_id
         return event
 
-    return await _cached(f"tour:{tour_id}", 45.0, _fetch)
+    return await _cached(f"tour:{clean_id}", 45.0, _fetch)
 
 
 # Fetches round details and current game states
 async def get_round(tour_id: str, round_id: str) -> dict:
-    tour_id = _validate_id(tour_id, "tournament id")
     round_id = _validate_id(round_id, "round id")
 
     async def _fetch():
         event = await get_tournament(tour_id)
+        resolved_tour_id = event.get("id")
         round_meta = next((r for r in event.get("rounds") or [] if r.get("id") == round_id), None)
         if round_meta is None:
             raise BroadcastError("Round not found in this tournament")
@@ -605,6 +701,7 @@ async def get_round(tour_id: str, round_id: str) -> dict:
         detail = _norm_round_detail(data)
         detail["event"] = event
         await _enrich_games_with_pgn(round_id, detail.get("games") or [])
+        await _check_and_enqueue_live_updates(resolved_tour_id, round_id, detail.get("games") or [])
         return detail
 
     return await _cached(f"round:{tour_id}:{round_id}", 10.0, _fetch)
@@ -653,26 +750,72 @@ def _extract_pgn_moves(game: chess.pgn.Game) -> list[dict]:
     moves = []
     ply = 0
     for node in game.mainline():
+        move = node.move
+        if not move:
+            continue
         try:
-            move = node.move
             san = board.san(move)
-            uci = move.uci()
-            is_white = board.turn == chess.WHITE
-            comment = (node.comment or "").strip()
-            clk_match = re.search(r"\[%clk\s+([0-9:]+)\]", comment)
-            clock_str = clk_match.group(1) if clk_match else None
-            board.push(move)
-            ply += 1
-            moves.append({
-                "ply": ply,
-                "san": san,
-                "uci": uci,
-                "is_white": is_white,
-                "fen_after": board.fen(),
-                "clock_str": clock_str,
-            })
         except Exception:
-            break
+            san = node.san() if hasattr(node, "san") else str(move)
+        uci = move.uci()
+        is_white = board.turn == chess.WHITE
+        comment = (node.comment or "").strip()
+        clk_match = re.search(r"\[%clk\s+([0-9:]+)\]", comment)
+        clock_str = clk_match.group(1) if clk_match else None
+
+        eval_match = re.search(r"\[%eval\s+([+-]?[0-9.]+|#[+-]?[0-9]+)\]", comment)
+        eval_cp = None
+        if eval_match:
+            raw_v = eval_match.group(1)
+            try:
+                if raw_v.startswith("#"):
+                    m_val = int(raw_v.replace("#", ""))
+                    eval_cp = 10000 if m_val > 0 else -10000
+                else:
+                    eval_cp = int(round(float(raw_v) * 100))
+            except Exception:
+                eval_cp = None
+
+        classification = None
+        if san.endswith("??") or re.search(r"\bblunder\b", comment, re.I):
+            classification = "blunder"
+        elif san.endswith("?!") or re.search(r"\binaccuracy\b", comment, re.I):
+            classification = "inaccuracy"
+        elif san.endswith("?") or re.search(r"\bmistake\b", comment, re.I):
+            classification = "mistake"
+        elif san.endswith("!") or re.search(r"\bbest\b", comment, re.I):
+            classification = "best"
+
+        best_match = re.search(r"(?:Inaccuracy|Mistake|Blunder)\.\s+([A-Za-z0-9+#=]+)\s+was\s+best", comment, re.I)
+        best_san = best_match.group(1) if best_match else None
+        clean_comment = re.sub(r"\[%(?:clk|eval|emt)[^\]]*\]", "", comment).strip()
+        clean_comment = re.sub(r"\s+", " ", clean_comment).strip() or None
+
+        try:
+            board.push(move)
+        except Exception:
+            try:
+                board.push_uci(uci)
+            except Exception:
+                try:
+                    board.push_san(san)
+                except Exception:
+                    pass
+        ply += 1
+        moves.append({
+            "ply": ply,
+            "move_number": (ply + 1) // 2,
+            "turn": "white" if is_white else "black",
+            "san": san,
+            "uci": uci,
+            "is_white": is_white,
+            "fen_after": board.fen(),
+            "clock_str": clock_str,
+            "eval_after_cp": eval_cp,
+            "classification": classification,
+            "best_move_san": best_san,
+            "comment": clean_comment,
+        })
     return moves
 
 
@@ -707,6 +850,9 @@ async def _enrich_games_with_pgn(round_id: str, games: list[dict]):
             if pgn_g is not None:
                 moves = _extract_pgn_moves(pgn_g)
                 game["moves"] = moves
+                if moves:
+                    game["fen"] = moves[-1]["fen_after"]
+                    game["last_move"] = moves[-1]["uci"]
                 eco = pgn_g.headers.get("ECO")
                 opening = pgn_g.headers.get("Opening")
                 pgn_res = pgn_g.headers.get("Result")
@@ -835,6 +981,7 @@ async def enqueue_game(
     is_live: bool = False,
     requested_by: Optional[str] = None,
     pgn_text: Optional[str] = None,
+    force: bool = False,
 ) -> dict:
     db = get_db()
     now = datetime.now(timezone.utc)
@@ -842,14 +989,15 @@ async def enqueue_game(
         {"round_id": round_id, "game_id": game_id},
         {"finished": 1, "ply_count": 1},
     )
-    if existing and existing.get("finished") and not is_live:
+    should_skip = existing and existing.get("finished") and not is_live and pgn_text is None and not requested_by and not force
+    if should_skip:
         return {"status": "done", "round_id": round_id, "game_id": game_id}
 
     queued = await db.broadcast_analysis_queue.find_one(
         {"round_id": round_id, "game_id": game_id},
         {"status": 1, "priority": 1},
     )
-    if queued and queued.get("status") in ("queued", "running"):
+    if queued and queued.get("status") in ("queued", "running") and not force:
         if int(priority) < int(queued.get("priority", 10)):
             await db.broadcast_analysis_queue.update_one(
                 {"round_id": round_id, "game_id": game_id},
@@ -860,10 +1008,10 @@ async def enqueue_game(
             "round_id": round_id,
             "game_id": game_id,
         }
-    if is_live and queued and queued.get("status") == "done":
+    if queued and (queued.get("status") in ("done", "failed", "skipped") or force):
         await db.broadcast_analysis_queue.update_one(
             {"round_id": round_id, "game_id": game_id},
-            {"$set": {"status": "queued", "priority": int(priority), "is_live": True, "updated_at": now}},
+            {"$set": {"status": "queued", "priority": int(priority), "is_live": bool(is_live), "attempts": 0, "error": None, "requested_by": requested_by, "updated_at": now}},
         )
         return {"status": "queued", "round_id": round_id, "game_id": game_id}
 
@@ -941,6 +1089,36 @@ async def prioritize_game_analysis(
         priority=prio,
         is_live=is_live,
     )
+
+
+# Enqueues live broadcast games when newer plies are detected
+async def _check_and_enqueue_live_updates(tour_id: str, round_id: str, games: list[dict]):
+    if not games or not round_id:
+        return
+    try:
+        db = get_db()
+        for g in games:
+            if g.get("moves"):
+                gid = g.get("id")
+                if not gid:
+                    continue
+                curr_plies = len(g["moves"])
+                cached = await db.broadcast_analyses.find_one(
+                    {"round_id": round_id, "game_id": gid},
+                    {"ply_count": 1},
+                )
+                cached_plies = int(cached.get("ply_count", 0)) if cached else 0
+                if curr_plies > cached_plies:
+                    await enqueue_game(
+                        round_id=round_id,
+                        game_id=gid,
+                        tour_id=tour_id,
+                        priority=1,
+                        is_live=True,
+                        force=True,
+                    )
+    except Exception as exc:
+        logger.debug("[broadcasts] could not enqueue live updates: %s", exc)
 
 
 _event_analysis_locks: dict[str, asyncio.Lock] = {}
@@ -1086,10 +1264,20 @@ async def event_analysis_progress(tour_id: str) -> dict:
 # Returns cached analysis or queue status for game
 async def analysis_status(round_id: str, game_id: str) -> dict:
     db = get_db()
+    queue = await db.broadcast_analysis_queue.find_one({"round_id": round_id, "game_id": game_id})
     analysis = await db.broadcast_analyses.find_one({"round_id": round_id, "game_id": game_id})
+    if queue and queue.get("status") in ("queued", "running"):
+        return {
+            "status": queue.get("status"),
+            "analysis": public_analysis(analysis) if analysis else None,
+            "queue": {
+                "attempts": queue.get("attempts", 0),
+                "error": queue.get("error"),
+                "priority": queue.get("priority", 1),
+            },
+        }
     if analysis:
         return {"status": "done", "analysis": public_analysis(analysis)}
-    queue = await db.broadcast_analysis_queue.find_one({"round_id": round_id, "game_id": game_id})
     if queue:
         return {
             "status": queue.get("status") or "queued",
@@ -1180,6 +1368,18 @@ def _find_pgn_game(pgn_text: str, game_id: str) -> Optional[chess.pgn.Game]:
     for game in games:
         if _pgn_game_id(game) == game_id:
             return game
+        url = game.headers.get("GameURL") or game.headers.get("Site") or ""
+        if game_id and game_id in url:
+            return game
+    if game_id and game_id.isdigit():
+        idx = int(game_id)
+        if 0 <= idx < len(games):
+            return games[idx]
+    for game in games:
+        w_name = str(game.headers.get("White") or "")
+        b_name = str(game.headers.get("Black") or "")
+        if game_id and (game_id in w_name or game_id in b_name):
+            return game
     return games[0] if len(games) == 1 else None
 
 
@@ -1258,7 +1458,7 @@ class _BroadcastAnalyzer:
             info = await asyncio.to_thread(
                 self._engine.analyse,
                 board,
-                chess.engine.Limit(depth=depth),
+                chess.engine.Limit(depth=depth, time=0.25),
             )
             result = {"cp": _score_cp(info), "best_uci": _best_uci(info)}
             self._eval_cache[key] = result
@@ -1276,38 +1476,82 @@ class _BroadcastAnalyzer:
         fens = [board.fen()]
         move_meta = []
         for node in game.mainline():
+            move = node.move
+            if not move:
+                continue
             try:
-                move = node.move
                 san = board.san(move)
-                uci = move.uci()
-                is_white = board.turn == chess.WHITE
-                comment = (node.comment or "").strip()
-                clk_match = re.search(r"\[%clk\s+([0-9:]+)\]", comment)
-                clock_str = clk_match.group(1) if clk_match else None
-                clean_comment = re.sub(r"\[%(?:clk|eval|emt)[^\]]*\]", "", comment).strip()
-                clean_comment = re.sub(r"\s+", " ", clean_comment).strip()
-                board.push(move)
-                fens.append(board.fen())
-                move_meta.append({
-                    "san": san,
-                    "uci": uci,
-                    "is_white": is_white,
-                    "comment": clean_comment or None,
-                    "clock_str": clock_str,
-                })
             except Exception:
-                break
+                san = node.san() if hasattr(node, "san") else str(move)
+            uci = move.uci()
+            is_white = board.turn == chess.WHITE
+            comment = (node.comment or "").strip()
+            clk_match = re.search(r"\[%clk\s+([0-9:]+)\]", comment)
+            clock_str = clk_match.group(1) if clk_match else None
+
+            eval_match = re.search(r"\[%eval\s+([+-]?[0-9.]+|#[+-]?[0-9]+)\]", comment)
+            eval_cp = None
+            if eval_match:
+                raw_v = eval_match.group(1)
+                try:
+                    if raw_v.startswith("#"):
+                        m_val = int(raw_v.replace("#", ""))
+                        eval_cp = 10000 if m_val > 0 else -10000
+                    else:
+                        eval_cp = int(round(float(raw_v) * 100))
+                except Exception:
+                    eval_cp = None
+
+            classification = None
+            if san.endswith("??") or re.search(r"\bblunder\b", comment, re.I):
+                classification = "blunder"
+            elif san.endswith("?!") or re.search(r"\binaccuracy\b", comment, re.I):
+                classification = "inaccuracy"
+            elif san.endswith("?") or re.search(r"\bmistake\b", comment, re.I):
+                classification = "mistake"
+            elif san.endswith("!") or re.search(r"\bbest\b", comment, re.I):
+                classification = "best"
+
+            best_match = re.search(r"(?:Inaccuracy|Mistake|Blunder)\.\s+([A-Za-z0-9+#=]+)\s+was\s+best", comment, re.I)
+            best_san = best_match.group(1) if best_match else None
+            clean_comment = re.sub(r"\[%(?:clk|eval|emt)[^\]]*\]", "", comment).strip()
+            clean_comment = re.sub(r"\s+", " ", clean_comment).strip()
+
+            try:
+                board.push(move)
+            except Exception:
+                try:
+                    board.push_uci(uci)
+                except Exception:
+                    try:
+                        board.push_san(san)
+                    except Exception:
+                        pass
+            fens.append(board.fen())
+            move_meta.append({
+                "san": san,
+                "uci": uci,
+                "is_white": is_white,
+                "comment": clean_comment or None,
+                "clock_str": clock_str,
+                "eval_cp": eval_cp,
+                "classification": classification,
+                "best_move_san": best_san,
+            })
 
         if not move_meta:
             return None
 
         evals = []
-        for fen in fens:
-            try:
-                evals.append(await self.evaluate(fen, depth))
-            except Exception as exc:
-                logger.warning("[broadcasts] evaluation failed for %s: %s", fen[:40], exc)
-                evals.append({"cp": 0, "best_uci": None})
+        for idx, fen in enumerate(fens):
+            if idx > 0 and move_meta[idx - 1].get("eval_cp") is not None:
+                evals.append({"cp": move_meta[idx - 1]["eval_cp"], "best_uci": None})
+            else:
+                try:
+                    evals.append(await self.evaluate(fen, depth))
+                except Exception as exc:
+                    logger.warning("[broadcasts] evaluation failed for %s: %s", fen[:40], exc)
+                    evals.append({"cp": 0, "best_uci": None})
 
         analyzed_moves = []
         white_acc = []
@@ -1333,10 +1577,12 @@ class _BroadcastAnalyzer:
             accuracy = accuracy_from_wp_diff(win_before, win_after)
             best_uci = before.get("best_uci")
             is_best = bool(best_uci and meta["uci"] == best_uci)
-            classification = classify_loss(cp_loss, is_best=is_best)
+            classification = meta.get("classification") or classify_loss(cp_loss, is_best=is_best)
+            if classification == "best":
+                is_best = True
 
-            best_san = ""
-            if best_uci:
+            best_san = meta.get("best_move_san") or ""
+            if not best_san and best_uci:
                 try:
                     probe = chess.Board(fens[idx])
                     best_move = chess.Move.from_uci(best_uci)

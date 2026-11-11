@@ -2,6 +2,17 @@ import React, { memo, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { CLASSIFICATION_META, normalizeClassification } from '../../lib/chessUtils';
 
+function capitalize(s) {
+  if (!s || typeof s !== 'string') return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function formatEval(cp) {
+  if (cp == null || Number.isNaN(Number(cp))) return null;
+  const num = Number(cp);
+  return num >= 0 ? `+${(num / 100).toFixed(1)}` : `${(num / 100).toFixed(1)}`;
+}
+
 const MoveList = memo(function MoveList({ moves, activeIndex = null, onMoveClick }) {
   const bodyRef = useRef(null);
   const bottomRef = useRef(null);
@@ -9,7 +20,7 @@ const MoveList = memo(function MoveList({ moves, activeIndex = null, onMoveClick
 
   useEffect(() => {
     if (!bodyRef.current) return;
-    if (activeIndex === null) {
+    if (activeIndex === null || activeIndex < 0) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
       return;
     }
@@ -41,27 +52,51 @@ const MoveList = memo(function MoveList({ moves, activeIndex = null, onMoveClick
           const whiteMoveIdx = pairIdx * 2;
           const blackMoveIdx = pairIdx * 2 + 1;
 
+          const isWhiteActive = activeIndex === whiteMoveIdx;
+          const isBlackActive = activeIndex === blackMoveIdx;
+          const isPairActive = isWhiteActive || isBlackActive;
+
+          const activeSubMove = isWhiteActive
+            ? (['inaccuracy', 'mistake', 'blunder'].includes(whiteMove?.classification) ? whiteMove : null)
+            : isBlackActive
+            ? (['inaccuracy', 'mistake', 'blunder'].includes(blackMove?.classification) ? blackMove : null)
+            : null;
+
           return (
-            <motion.div
-              key={pairIdx}
-              ref={activeIndex === whiteMoveIdx || activeIndex === blackMoveIdx ? activeRef : undefined}
-              className="move-pair"
-              initial={{ opacity: 0, x: -4 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.15 }}
-            >
-              <span className="move-num mono">{pairIdx + 1}.</span>
-              <MoveCell
-                move={whiteMove}
-                isActive={activeIndex === whiteMoveIdx}
-                onClick={() => onMoveClick?.(whiteMoveIdx)}
-              />
-              <MoveCell
-                move={blackMove}
-                isActive={activeIndex === blackMoveIdx}
-                onClick={() => blackMove && onMoveClick?.(blackMoveIdx)}
-              />
-            </motion.div>
+            <React.Fragment key={pairIdx}>
+              <motion.div
+                ref={isPairActive ? activeRef : undefined}
+                className={`move-pair ${isPairActive ? 'move-pair-focused' : ''}`}
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.15 }}
+              >
+                <span className="move-num mono">{pairIdx + 1}.</span>
+                <MoveCell
+                  move={whiteMove}
+                  isActive={isWhiteActive}
+                  onClick={() => onMoveClick?.(whiteMoveIdx)}
+                />
+                <MoveCell
+                  move={blackMove}
+                  isActive={isBlackActive}
+                  onClick={() => blackMove && onMoveClick?.(blackMoveIdx)}
+                />
+              </motion.div>
+
+              {activeSubMove && (
+                <div className={`move-alert-row ${activeSubMove.classification}`}>
+                  <div className="move-alert-text">
+                    <span className="move-alert-icon">💡</span>
+                    <strong>{capitalize(activeSubMove.classification)}.</strong>{' '}
+                    <span>{activeSubMove.best_move_san || 'Alternative'} was best.</span>
+                  </div>
+                  {activeSubMove.comment && (
+                    <div className="move-alert-pv mono">{activeSubMove.comment}</div>
+                  )}
+                </div>
+              )}
+            </React.Fragment>
           );
         })}
         <div ref={bottomRef} />
@@ -74,10 +109,11 @@ function MoveCell({ move, isActive, onClick }) {
   if (!move) return <span className="move-cell empty" />;
   const key = normalizeClassification(move.classification);
   const meta = CLASSIFICATION_META[key];
+  const evalStr = formatEval(move.eval_after_cp);
 
   return (
     <button
-      className={`move-cell ${isActive ? 'move-cell-active' : ''}`}
+      className={`move-cell ${isActive ? 'move-cell-active' : ''} ${key ? `cell-${key}` : ''}`}
       onClick={onClick}
       title={meta ? meta.label : undefined}
       aria-current={isActive ? 'step' : undefined}
@@ -91,6 +127,9 @@ function MoveCell({ move, isActive, onClick }) {
         >
           {meta.emoji}
         </span>
+      )}
+      {evalStr && (
+        <span className="move-eval-score mono">{evalStr}</span>
       )}
     </button>
   );
