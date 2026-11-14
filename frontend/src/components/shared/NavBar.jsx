@@ -29,7 +29,11 @@ export function NavBar() {
   const inLiveGame = location.pathname.startsWith('/game/');
 
   const isActive = (path) => {
+    if (path === '/lobby') return location.pathname === '/lobby' || location.pathname.startsWith('/game/') || location.pathname === '/paused';
+    if (path === '/learn') return location.pathname.startsWith('/learn');
     if (path === '/events') return location.pathname.startsWith('/events');
+    if (path === '/friends') return location.pathname.startsWith('/friends');
+    if (path === '/history') return location.pathname.startsWith('/history') || location.pathname.startsWith('/review/');
     if (path === '/admin/users') return location.pathname.startsWith('/admin/users');
     if (path === '/admin/training') return location.pathname.startsWith('/admin/training');
     return location.pathname === path;
@@ -88,96 +92,86 @@ export function NavBar() {
         </button>
 
         <ul className="navbar-links" role="navigation" aria-label="Main navigation">
-          {isLoggedIn ? (
+          <li>
+            <Link
+              className={`interactive${isActive('/lobby') ? ' active' : ''}`}
+              to="/lobby"
+              onClick={() => setMenuOpen(false)}
+            >
+              Play
+            </Link>
+          </li>
+          {isLoggedIn && (
+            <li>
+              <Link
+                className={`interactive${isActive('/friends') ? ' active' : ''}`}
+                to="/friends"
+                onClick={() => setMenuOpen(false)}
+              >
+                Friends
+                {friendTotal > 0 && (
+                  <span className="nav-badge">
+                    {friendTotal > 99 ? '99+' : friendTotal}
+                  </span>
+                )}
+              </Link>
+            </li>
+          )}
+          <li>
+            <Link
+              className={`interactive${isActive('/learn') ? ' active' : ''}`}
+              to="/learn"
+              onClick={() => setMenuOpen(false)}
+            >
+              Learn
+            </Link>
+          </li>
+          <li>
+            <Link
+              className={`interactive${isActive('/events') ? ' active' : ''}`}
+              to="/events"
+              onClick={() => setMenuOpen(false)}
+            >
+              Events
+            </Link>
+          </li>
+          {isLoggedIn && (
+            <li>
+              <Link
+                className={`interactive${isActive('/history') ? ' active' : ''}`}
+                to="/history"
+                onClick={() => setMenuOpen(false)}
+              >
+                History
+              </Link>
+            </li>
+          )}
+          {isLoggedIn && user?.role === 'admin' && (
             <>
               <li>
                 <Link
-                  className={`interactive${isActive('/lobby') ? ' active' : ''}`}
-                  to="/lobby"
+                  className={`interactive${isActive('/admin/users') ? ' active' : ''}`}
+                  to="/admin/users"
                   onClick={() => setMenuOpen(false)}
                 >
-                  Play
+                  Users
                 </Link>
               </li>
               <li>
                 <Link
-                  className={`interactive${isActive('/friends') ? ' active' : ''}`}
-                  to="/friends"
+                  className={`interactive${isActive('/admin/training') ? ' active' : ''}`}
+                  to="/admin/training"
                   onClick={() => setMenuOpen(false)}
                 >
-                  Friends
-                  {friendTotal > 0 && (
+                  Training
+                  {trainingNew > 0 && (
                     <span className="nav-badge">
-                      {friendTotal > 99 ? '99+' : friendTotal}
+                      {trainingNew > 99 ? '99+' : trainingNew}
                     </span>
                   )}
                 </Link>
               </li>
-              <li>
-                <Link
-                  className={`interactive${isActive('/learn') ? ' active' : ''}`}
-                  to="/learn"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Learn
-                </Link>
-              </li>
-              <li>
-                <Link
-                  className={`interactive${isActive('/events') ? ' active' : ''}`}
-                  to="/events"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Events
-                </Link>
-              </li>
-              <li>
-                <Link
-                  className={`interactive${isActive('/history') ? ' active' : ''}`}
-                  to="/history"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  History
-                </Link>
-              </li>
-              {user?.role === 'admin' && (
-                <>
-                  <li>
-                    <Link
-                      className={`interactive${isActive('/admin/users') ? ' active' : ''}`}
-                      to="/admin/users"
-                      onClick={() => setMenuOpen(false)}
-                    >
-                      Users
-                    </Link>
-                  </li>
-                  <li>
-                    <Link
-                      className={`interactive${isActive('/admin/training') ? ' active' : ''}`}
-                      to="/admin/training"
-                      onClick={() => setMenuOpen(false)}
-                    >
-                      Training
-                      {trainingNew > 0 && (
-                        <span className="nav-badge">
-                          {trainingNew > 99 ? '99+' : trainingNew}
-                        </span>
-                      )}
-                    </Link>
-                  </li>
-                </>
-              )}
             </>
-          ) : (
-            <li>
-              <Link
-                className={`interactive${isActive('/events') ? ' active' : ''}`}
-                to="/events"
-                onClick={() => setMenuOpen(false)}
-              >
-                Events
-              </Link>
-            </li>
           )}
         </ul>
 
@@ -218,7 +212,7 @@ export function NavBar() {
             </>
           ) : (
             <>
-              <Link to="/login" className="btn-neon interactive" style={{ borderColor: 'var(--royal-gold, #D4AF37)', color: 'var(--royal-gold, #D4AF37)' }}>Log in</Link>
+              <Link to="/login" className="btn-neon btn-neon-secondary interactive">Log in</Link>
               <Link to="/signup" className="btn-neon interactive">Sign up</Link>
             </>
           )}

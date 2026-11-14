@@ -4,50 +4,50 @@ RightMove is a comprehensive web application for playing, learning, and analyzin
 
 ## Key Features
 
-♟️ **Play a Bot (Stockfish & Maia-3)**
+**Play a Bot (Stockfish & Maia-3)**
 - Challenge Stockfish (depth-tiered difficulty) or Maia-3 (human-like play with Elo-scaled difficulty, models `maia3-3m` / `5m` / `23m` / `79m`).
 - Pick your color before the game and reconfigure the bot mid-game.
 - Live clocks with increment support and authoritative server-side game state.
 
-🧠 **Real-Time Training & Coaching**
+**Real-Time Training & Coaching**
 - Get top candidate moves with win-probability bars while you play.
 - Request hints, plain-language move explanations, and full position breakdowns powered by a local HuggingFace model with a rule-based offline fallback.
 - Tactical motif detection, positional concept analysis, move simulation, and structured lessons from the Coach panel.
 
-👥 **Play a Friend & Random Matchmaking**
+**Play a Friend & Random Matchmaking**
 - Send and accept friend requests, then invite friends to online games.
 - Join the matchmaking queue for first-come-first-served pairing per time control.
 - Resign, offer draws, request takebacks, and rematch without leaving the room.
 
-🏠 **Pass & Play**
+**Pass & Play**
 - Local hot-seat games on one device with zero network traffic.
 - Games persist in the browser via IndexedDB, so an interrupted local game survives refreshes.
 
-📊 **Game Review & Shareable Reports**
+**Game Review & Shareable Reports**
 - Replay every finished game with per-move accuracy scored from Stockfish win-probability analysis.
 - Key moments, W/D/L evaluation charts, and full-text reports with PDF export.
 - Share any review through a link that opens without an account.
 
-📚 **Learn From PGNs**
+**Learn From PGNs**
 - Upload your own PGN files for batch game analysis.
 - Analyze any single position on demand.
 
-🏟️ **Live Events (Free Forever)**
+ **Live Events (Free Forever)**
 - Watch major chess broadcasts from the free Lichess Broadcast API: live, upcoming, and recent championship events.
 - Open any tournament to follow every board, replay finished games, and see saved Stockfish analysis.
 - Finished games in tracked events are auto-analysed in the background by a dedicated local Stockfish process; anyone can also request analysis (login required) and the result is saved for everyone.
 - Import any PGN when an event is not covered by Lichess and get the same analysis pipeline.
 
-🏆 **GM Challenge & Custom Models**
+**GM Challenge & Custom Models**
 - Face the built-in GM-style policy network and get scored on your play.
 - Train your own playing-style models: upload PGNs, tune epochs / batch size / residual blocks / learning rate, track jobs (pause, resume, delete), then publish models for bot play.
 
-🔐 **Robust Accounts & Admin**
+**Robust Accounts & Admin**
 - Secure signup/login with JWT sessions, bcrypt hashing, profiles, stats, and avatar uploads.
 - Automatic admin seeding on first startup.
 - Admin dashboards for user management (roles, bans, per-user overviews) and the full training pipeline.
 
-🎨 **2D & 3D Boards**
+**2D & 3D Boards**
 - Switch between a classic 2D board and an animated Three.js 3D board.
 - Collectible board and piece themes with live previews, plus light/dark UI themes and a custom cursor.
 
@@ -330,7 +330,7 @@ Live Events use the free public **Lichess Broadcast API** with no paid key. Resp
 
 The RightMove application code is licensed under the **MIT License** — see the [LICENSE](./LICENSE) file for details.
 
-© 2026 Eswar Vutukuri, Lohitha Kanneganti, Yasaswi Venkat Vutla, Hema Sri Ch
+© 2026 Eswar Vutukuri, Lohitha Kanneganti, Yasaswi Venkat Vutla, Hemasri Vucha
 
 Note: the bundled Stockfish engine (source + binary under `backend/engines/Stockfish/`) is licensed under the **GPL** — see [`Copying.txt`](./backend/engines/Stockfish/Copying.txt). Maia-3 ships under its own [LICENSE](./backend/engines/Maia-3/maia3/LICENSE).
 

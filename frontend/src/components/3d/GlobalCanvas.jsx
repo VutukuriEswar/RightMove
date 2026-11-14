@@ -1,7 +1,7 @@
 import React, { Suspense, useRef, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { useGLTF, Sparkles } from '@react-three/drei';
+import { Sparkles } from '@react-three/drei';
 import * as THREE from 'three';
 import { useThemeStore } from '../../store/themeStore';
 
@@ -148,12 +148,9 @@ const ProceduralChessboard = () => {
   );
 };
 
-useGLTF.preload('/models/chess.glb');
-
 const InnerScene = ({ isDark }) => {
   const location  = useLocation();
   const isHome    = location.pathname === '/';
-  useGLTF('/models/chess.glb');
   return (
     <>
       <ambientLight intensity={isDark ? 0.6 : 0.8} color="#FFF4E0" />

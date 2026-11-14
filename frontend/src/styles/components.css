@@ -2,47 +2,58 @@
   position: fixed;
   top: 0;
   left: 0;
+  right: 0;
   width: 100%;
-  padding: 16px 24px;
-  padding-left: max(24px, env(safe-area-inset-left));
-  padding-right: max(24px, env(safe-area-inset-right));
+  height: 72px;
   z-index: 1000;
   display: flex;
   justify-content: center;
+  align-items: center;
+  background: var(--navbar-bg, rgba(12, 7, 4, 0.90));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--navbar-border, rgba(212, 175, 55, 0.22));
+  box-shadow: var(--navbar-shadow, 0 4px 24px rgba(0, 0, 0, 0.55));
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.navbar::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--navbar-glow, rgba(212, 175, 55, 0.55)), transparent);
+  pointer-events: none;
 }
 
 .navbar-inner {
   width: 100%;
-  max-width: 1360px;
+  max-width: 1440px;
+  height: 100%;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 16px;
-  padding: 16px 36px;
-  min-height: 74px;
-  background: var(--royal-card, rgba(15, 8, 5, 0.75));
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--royal-border, rgba(212, 175, 55, 0.35));
-  border-radius: 12px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  transition: all 0.3s ease;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 32px;
+  padding-left: max(32px, env(safe-area-inset-left));
+  padding-right: max(32px, env(safe-area-inset-right));
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
   position: relative;
   flex-wrap: nowrap;
 }
 
 .navbar-inner:hover {
-  border-color: var(--royal-gold, #D4AF37);
-  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border: none;
+  box-shadow: none;
 }
 
 .navbar-inner::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 20%; right: 20%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(212,175,55,0.6), transparent);
-  pointer-events: none;
+  display: none;
 }
 
 .navbar-logo {
@@ -66,7 +77,7 @@
 }
 
 .navbar-logo-text {
-  background: linear-gradient(135deg, var(--royal-ink), var(--royal-gold));
+  background: linear-gradient(135deg, var(--nav-link-color, var(--royal-ink)), var(--royal-gold));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   white-space: nowrap;
@@ -112,23 +123,24 @@
   font-family: 'Cinzel', serif;
   font-size: 0.9rem;
   font-weight: 600;
-  color: var(--royal-ink, #1C1008);
+  color: var(--nav-link-color, var(--royal-ink, #1C1008));
   text-transform: uppercase;
   letter-spacing: 0.11em;
   position: relative;
   transition: color 0.25s ease, opacity 0.25s ease;
-  opacity: 0.78;
+  opacity: 0.82;
   white-space: nowrap;
 }
 
 .navbar-links a:hover {
-  color: var(--royal-crimson, #8B2500);
+  color: var(--nav-link-hover, var(--royal-crimson, #8B2500));
   opacity: 1;
 }
 
 .navbar-links a.active {
-  color: var(--royal-gold, #D4AF37);
+  color: var(--nav-link-active, var(--royal-gold, #D4AF37));
   opacity: 1;
+  font-weight: 700;
 }
 
 .navbar-links a::after {
@@ -158,8 +170,8 @@
 
 .theme-toggle {
   background: none;
-  border: none;
-  font-size: 1.35rem;
+  border: 1px solid var(--navbar-border, rgba(212, 175, 55, 0.25));
+  font-size: 1.25rem;
   line-height: 1;
   width: 38px;
   height: 38px;
@@ -168,15 +180,16 @@
   justify-content: center;
   border-radius: 50%;
   padding: 0;
-  color: var(--royal-ink, #1C1008);
+  color: var(--nav-link-color, var(--royal-ink, #1C1008));
   cursor: pointer;
-  transition: transform 0.2s ease, background 0.2s ease;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
   flex-shrink: 0;
 }
 
 .theme-toggle:hover {
-  background: rgba(212, 175, 55, 0.14);
-  transform: scale(1.1);
+  background: rgba(212, 175, 55, 0.16);
+  border-color: var(--royal-gold, #D4AF37);
+  transform: scale(1.08);
 }
 
 .navbar-user {
@@ -342,6 +355,8 @@
 
 @media (max-width: 900px) {
   .navbar {
+    height: auto;
+    min-height: 72px;
     padding: 10px 12px;
     padding-left: max(12px, env(safe-area-inset-left));
     padding-right: max(12px, env(safe-area-inset-right));
@@ -349,6 +364,12 @@
   .navbar-inner {
     padding: 10px 16px;
     gap: 8px;
+  }
+  .navbar-inner.nav-open .navbar-links {
+    display: flex;
+    background: var(--navbar-bg);
+    padding: 12px 8px;
+    border-radius: 8px;
   }
   .navbar-auth {
     gap: 10px;
