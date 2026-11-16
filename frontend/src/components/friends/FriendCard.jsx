@@ -20,6 +20,13 @@ const COLOR_OPTIONS = [
   { id: 'black', label: '⚫ Black' },
 ];
 
+function tcLabel(tc, inc) {
+  if (!tc || tc === 0) return 'No timer';
+  if (tc < 60) return `${tc}s`;
+  const m = Math.round(tc / 60);
+  return inc ? `${m}+${inc}` : `${m} min`;
+}
+
 export default function FriendCard({
   friend,
   isOnline,
@@ -30,6 +37,9 @@ export default function FriendCard({
   onChallenge,
   onChallengePgn,
   onRemove,
+  pausedMatches = [],
+  onResumeGame,
+  onResignPaused,
 }) {
   const navigate = useNavigate();
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -275,6 +285,57 @@ export default function FriendCard({
           </div>
         </div>
       </div>
+
+      {pausedMatches && pausedMatches.length > 0 && (
+        <div className="friend-paused-section">
+          <div className="friend-paused-header">
+            <span className="friend-paused-icon">⏸</span>
+            <span className="friend-paused-title">Paused Matches ({pausedMatches.length})</span>
+          </div>
+          <div className="friend-paused-list">
+            {pausedMatches.map((pm) => (
+              <div key={pm.game_id} className="friend-paused-item">
+                <div className="friend-paused-info">
+                  <div className="friend-paused-row">
+                    <span className="friend-paused-tc">
+                      ⏱ {tcLabel(pm.time_control_seconds, pm.increment_seconds)}
+                    </span>
+                    <span className="friend-paused-moves">
+                      ♟ {pm.moves_count} {pm.moves_count === 1 ? 'move' : 'moves'}
+                    </span>
+                  </div>
+                  <div className="friend-paused-row">
+                    <span className="friend-paused-color">
+                      You: {pm.my_color === 'white' ? 'White ⚪' : 'Black ⚫'}
+                    </span>
+                    <span className={`friend-paused-turn ${pm.is_my_turn ? 'turn-mine' : 'turn-theirs'}`}>
+                      {pm.is_my_turn ? '• Your turn' : "• Opponent's turn"}
+                    </span>
+                  </div>
+                </div>
+                <div className="friend-paused-btns">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm interactive friend-paused-resume-btn"
+                    disabled={busy}
+                    onClick={() => onResumeGame ? onResumeGame(pm.game_id) : navigate(`/game/${pm.game_id}`)}
+                  >
+                    ▶ Resume
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm interactive friend-paused-resign-btn"
+                    disabled={busy}
+                    onClick={() => onResignPaused ? onResignPaused(pm.game_id) : null}
+                  >
+                    ✕ Resign
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="friend-actions">
         {waiting ? (

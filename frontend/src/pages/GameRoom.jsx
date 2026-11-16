@@ -42,6 +42,7 @@ export default function GameRoom() {
     drawCooling,
     bothReady,
     waitingForOpponent,
+    gamePausedBy,
     hasTimer,
     serverError,
     canTakeback,
@@ -97,7 +98,17 @@ export default function GameRoom() {
 
   const leaving = useLeaveGameStore((s) => s.leaving);
 
-  const leaveGameBlocker = useLeaveGameGuard(resignForLeave);
+  const isPausable = gameMode === 'pass_and_play' || gameMode === 'friend' || !!trainingMode || gameMode === 'bot';
+
+  const handlePauseForGuard = useCallback(async () => {
+    try {
+      await gamesApi.pauseGame(id);
+      useLeaveGameStore.getState().allowLeaveOnce();
+    } catch (_) {
+    }
+  }, [id]);
+
+  const leaveGameBlocker = useLeaveGameGuard(resignForLeave, isPausable ? handlePauseForGuard : null);
 
   useEffect(() => {
     useLeaveGameStore.getState().setLeaving(false);
@@ -176,12 +187,16 @@ export default function GameRoom() {
         useLeaveGameStore.getState().allowLeaveOnce();
       } catch (_) {
       }
-      navigate('/paused');
+      if (gameMode === 'friend') {
+        navigate('/friends');
+      } else {
+        navigate('/paused');
+      }
     } catch (err) {
       useGameStore.setState({ serverError: err.message || 'Pause failed' });
       setPausing(false);
     }
-  }, [pausing, id, navigate]);
+  }, [pausing, id, navigate, gameMode]);
   const [rematchError, setRematchError] = useState(null);
 
   const handleRematch = useCallback(async () => {
@@ -624,6 +639,32 @@ export default function GameRoom() {
     document.body
   );
 
+  const pausedModalPortal = gamePausedBy && gameActive && createPortal(
+    <div className="ready-modal-overlay">
+      <div className="ready-modal">
+        <div className="ready-modal-crest">⏸</div>
+        <h2>Match Paused</h2>
+        <p>
+          {gamePausedBy} paused the match. You can resume it anytime together from the Friends page!
+        </p>
+        <div className="modal-btn-row">
+          <button
+            className="btn-neon interactive"
+            style={{ width: '100%', padding: '12px 0' }}
+            onClick={() => {
+              try { useLeaveGameStore.getState().allowLeaveOnce(); } catch (_) {}
+              useGameStore.setState({ gamePausedBy: null });
+              navigate('/friends');
+            }}
+          >
+            Go to Friends Page
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+
   const gameOverTitle =
     result === 'draw' ? 'Game Drawn'
       : result === 'white' ? 'White Wins!'
@@ -846,6 +887,20 @@ export default function GameRoom() {
               </div>
             )}
           </div>
+          <button
+            className="btn-neon interactive"
+            style={{
+              width: '100%',
+              background: 'transparent',
+              color: 'var(--royal-gold, #D4AF37)',
+              borderColor: 'var(--royal-gold, #D4AF37)',
+            }}
+            disabled={pausing}
+            title="Pause and continue later"
+            onClick={handlePause}
+          >
+            {pausing ? 'Pausing...' : '⏸ Pause'}
+          </button>
         </div>
       ) : (
         <div className={`action-buttons${trainingMode ? ' coach-control-grid' : ''}`}>
@@ -891,7 +946,7 @@ export default function GameRoom() {
               }}>{drawDeclinedMsg}</div>
             )}
           </div>
-          {isEngineGame && (
+          {(isEngineGame || gameMode === 'friend') && (
             <button
               className="btn-neon interactive"
               style={{ background: 'transparent', color: 'var(--royal-gold, #D4AF37)', borderColor: 'var(--royal-gold, #D4AF37)' }}
@@ -921,6 +976,7 @@ export default function GameRoom() {
       {readyModalPortal}
       {resumeModalPortal}
       {drawModalPortal}
+      {pausedModalPortal}
       {gameOverModalPortal}
       {drawerPortal}
 
@@ -934,30 +990,6 @@ export default function GameRoom() {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        {playersReady && (
-          <div className={`game-top-bar${trainingMode ? ' coach-top-bar' : ''}`}>
-            <button
-              className="game-menu-btn interactive"
-              onClick={() => setSidebarOpen(true)}
-              aria-label="Open menu"
-              title="Menu: Win chances, Setup, Parameters"
-            >
-              ☰
-            </button>
-            {trainingMode && (
-              <>
-                <div className="coach-topbar-title">
-                  <span className="coach-topbar-crest" aria-hidden="true">♞</span>
-                  <div>
-                    <span className="coach-topbar-eyebrow">Training workspace</span>
-                    <h1>Coach Mode</h1>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
         <div className={`game-layout${trainingMode ? ' coach-game-layout' : ''}`}>
 
           <div className={`game-board-area${trainingMode ? ' coach-board-area' : ''}`}>
@@ -965,45 +997,57 @@ export default function GameRoom() {
               className={`board-column${isPassAndPlay && isFlipping && boardStyle === '2d' ? ' board-flip-anim' : ''}`}
             >
 
-              <div className={`player-info top${theirClockActive ? ' active-turn' : ''}`}>
-                <div className="player-info-left">
-                  <div className="player-avatar">{theirLabel.charAt(0).toUpperCase()}</div>
-                  <span className="player-name">{theirLabel}</span>
-                  {topIsActive && (
-                    <span className={`turn-badge${trainingMode && !isPassAndPlay ? ' thinking-badge' : ''}`}>
-                      <span className="turn-dot" />
-                      {trainingMode && !isPassAndPlay ? 'Opponent thinking' : 'TO MOVE'}
-                    </span>
-                  )}
+              <div className="board-top-bar">
+                <div className="board-top-bar-left">
+                  <button
+                    className="game-menu-btn interactive coach-inline-menu-btn"
+                    onClick={() => setSidebarOpen(true)}
+                    aria-label="Open menu"
+                    title="Menu: Win chances, Setup, Parameters"
+                  >
+                    ☰
+                  </button>
                 </div>
-                <div className="player-info-right">
-                  {!isPassAndPlay && !isEngineGame && opponentUsername && !isFriend && (
-                    <button
-                      className="btn-sm interactive"
-                      style={{
-                        fontSize: '0.7rem', padding: '4px 8px', marginRight: '8px',
-                        background: friendReqSent ? 'transparent' : undefined,
-                        borderColor: friendReqSent ? 'var(--royal-gold)' : undefined,
-                        color: friendReqSent ? 'var(--royal-gold)' : undefined
-                      }}
-                      disabled={friendReqSent}
-                      title={friendReqSent ? 'Friend request sent!' : `Add ${opponentUsername} as friend`}
-                      onClick={async () => {
-                        try {
-                          await friendsApi.sendRequest(opponentUsername);
-                          setFriendReqSent(true);
-                        } catch (e) {
-
-                        }
-                      }}
-                    >
-                      {friendReqSent ? '✓ Requested' : '+ Add Friend'}
-                    </button>
-                  )}
-                  {showClocks && (
-                    <Clock ms={theirClock} active={theirClockActive} onTimeout={handleTheirTimeout} />
-                  )}
+                <div className={`player-info top${theirClockActive ? ' active-turn' : ''}`}>
+                  <div className="player-info-left">
+                    <div className="player-avatar">{theirLabel.charAt(0).toUpperCase()}</div>
+                    <span className="player-name">{theirLabel}</span>
+                    {topIsActive && (
+                      <span className={`turn-badge${trainingMode && !isPassAndPlay ? ' thinking-badge' : ''}`}>
+                        <span className="turn-dot" />
+                        {trainingMode && !isPassAndPlay ? 'Opponent thinking' : 'TO MOVE'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="player-info-right">
+                    {!isPassAndPlay && !isEngineGame && opponentUsername && !isFriend && (
+                      <button
+                        className="btn-sm interactive"
+                        style={{
+                          fontSize: '0.7rem', padding: '4px 8px', marginRight: '8px',
+                          background: friendReqSent ? 'transparent' : undefined,
+                          borderColor: friendReqSent ? 'var(--royal-gold)' : undefined,
+                          color: friendReqSent ? 'var(--royal-gold)' : undefined
+                        }}
+                        disabled={friendReqSent}
+                        title={friendReqSent ? 'Friend request sent!' : `Add ${opponentUsername} as friend`}
+                        onClick={async () => {
+                          try {
+                            await friendsApi.sendRequest(opponentUsername);
+                            setFriendReqSent(true);
+                          } catch (e) {
+                          }
+                        }}
+                      >
+                        {friendReqSent ? '✓ Requested' : '+ Add Friend'}
+                      </button>
+                    )}
+                    {showClocks && (
+                      <Clock ms={theirClock} active={theirClockActive} onTimeout={handleTheirTimeout} />
+                    )}
+                  </div>
                 </div>
+                <div className="board-top-bar-right" aria-hidden="true" />
               </div>
 
               {serverError && (

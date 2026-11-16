@@ -44,7 +44,7 @@ class RouteBlockerBoundary extends Component {
   }
 }
 
-export function useLeaveGameGuard(resignAndClose) {
+export function useLeaveGameGuard(resignAndClose, pauseAndClose) {
   const location = useLocation();
   const gameId = useGameStore((s) => s.gameId);
   const result = useGameStore((s) => s.result);
@@ -60,6 +60,8 @@ export function useLeaveGameGuard(resignAndClose) {
 
   const resignRef = useRef(resignAndClose);
   resignRef.current = resignAndClose;
+  const pauseRef = useRef(pauseAndClose);
+  pauseRef.current = pauseAndClose;
 
   const handleBlocked = useCallback((blocker) => {
     try {
@@ -69,7 +71,21 @@ export function useLeaveGameGuard(resignAndClose) {
       }
     } catch (_) {
     }
+    const canPause = typeof pauseRef.current === 'function';
     openLeaveDialog({
+      canPause,
+      onPause: async () => {
+        try {
+          useLeaveGameStore.getState().setLeaving(true);
+        } catch (_) {
+        }
+        closeLeaveDialog();
+        try {
+          await pauseRef.current?.();
+        } catch (_) {
+        }
+        blocker.proceed();
+      },
       onConfirm: () => {
         try {
           useLeaveGameStore.getState().setLeaving(true);

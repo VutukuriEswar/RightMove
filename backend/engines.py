@@ -443,7 +443,7 @@ logger = logging.getLogger(__name__)
 
 
 # Provides position analysis utilities
-STOCKFISH_DEPTH = 18
+STOCKFISH_DEPTH = 20
 
 
 # Builds plain-language move explanation

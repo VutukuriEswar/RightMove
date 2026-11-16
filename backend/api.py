@@ -269,6 +269,8 @@ async def create_game(body: CreateGameRequest, current_user: dict = Depends(get_
         if not friend:
             raise HTTPException(status_code=404, detail="Friend not found")
         black_id = str(friend["_id"])
+    elif body.mode == "pass_and_play":
+        white_id = user_id
 
     bot_engine = body.bot_engine
     bot_depth = body.bot_depth
@@ -413,32 +415,63 @@ async def _paused_game_or_404(db, game_id: str, user_id: str):
     game = await db.games.find_one({"_id": oid})
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    if game.get("mode") != "bot":
-        raise HTTPException(status_code=400, detail="Only coach games can be paused")
+    mode = game.get("mode")
+    if mode == "random":
+        raise HTTPException(status_code=400, detail="Quickmatch games cannot be paused")
+    if mode not in ("bot", "pass_and_play", "friend"):
+        raise HTTPException(status_code=400, detail="Only coach, pass & play, and friend games can be paused")
     if game.get("result") != "ongoing":
         raise HTTPException(status_code=400, detail="Game is already finished")
-    if user_id not in (game.get("white_id"), game.get("black_id")):
-        raise HTTPException(status_code=403, detail="Not your game")
+    if mode == "pass_and_play":
+        owner_id = game.get("white_id") or game.get("created_by")
+        if owner_id and owner_id != user_id:
+            raise HTTPException(status_code=403, detail="Not your game")
+    else:
+        if user_id not in (game.get("white_id"), game.get("black_id")):
+            raise HTTPException(status_code=403, detail="Not your game")
     return game
 
-# Lists paused coach games for current user
+# Lists paused games for current user
 @games_router.get("/mine/paused")
 async def get_paused_games(current_user: dict = Depends(get_current_user)):
     db = get_db()
+    user_id = str(current_user["_id"])
     cursor = db.paused_games.find(
-        {"user_id": str(current_user["_id"])}
+        {"$or": [
+            {"user_id": user_id},
+            {"user_ids": user_id},
+            {"white_id": user_id},
+            {"black_id": user_id},
+        ]}
     ).sort("paused_at", -1).limit(100)
     docs = await cursor.to_list(100)
     out = []
+    from bson import ObjectId as _OID
     for d in docs:
         moves = d.get("moves") or []
+        mode = d.get("mode", "bot")
+        opp_username = None
+        if mode == "friend":
+            opp_id = d.get("black_id") if d.get("white_id") == user_id else d.get("white_id")
+            if opp_id:
+                try:
+                    opp_user = await db.users.find_one({"_id": _OID(opp_id)})
+                    if opp_user:
+                        opp_username = opp_user.get("username")
+                except Exception:
+                    pass
+        my_color = d.get("player_color")
+        if mode == "friend":
+            my_color = "white" if d.get("white_id") == user_id else "black"
         out.append({
             "game_id": d["game_id"],
             "paused_at": _as_utc(d.get("paused_at")),
+            "mode": mode,
             "bot_engine": d.get("bot_engine"),
             "bot_depth": d.get("bot_depth"),
             "maia_elo": d.get("maia_elo"),
-            "player_color": d.get("player_color"),
+            "player_color": my_color,
+            "opponent_username": opp_username,
             "training_mode": d.get("training_mode", False),
             "time_control_seconds": d.get("time_control_seconds", 600),
             "increment_seconds": d.get("increment_seconds", 0),
@@ -447,10 +480,10 @@ async def get_paused_games(current_user: dict = Depends(get_current_user)):
         })
     return {"games": out}
 
-# Pauses live coach game and snapshots state
+# Pauses live game and snapshots state
 @games_router.post("/{game_id}/pause")
 async def pause_game(game_id: str, current_user: dict = Depends(get_current_user)):
-    from realtime import _get_state, live_clocks
+    from realtime import _get_state, live_clocks, manager
     db = get_db()
     user_id = str(current_user["_id"])
     game = await _paused_game_or_404(db, game_id, user_id)
@@ -459,11 +492,23 @@ async def pause_game(game_id: str, current_user: dict = Depends(get_current_user
         raise HTTPException(status_code=409, detail="Game is not live right now")
     state.clock_running = False
     clocks = live_clocks(state)
+    mode = game.get("mode")
+    await manager.broadcast(game_id, {
+        "type": "game_paused",
+        "payload": {
+            "game_id": game_id,
+            "paused_by": user_id,
+            "paused_by_username": current_user.get("username"),
+        }
+    })
+    user_ids = [uid for uid in (game.get("white_id"), game.get("black_id"), user_id) if uid]
     await db.paused_games.replace_one(
         {"game_id": game_id},
         {
             "game_id": game_id,
             "user_id": user_id,
+            "user_ids": user_ids,
+            "mode": mode,
             "fen": state.board.fen(),
             "moves": state.moves,
             "clocks": clocks,
@@ -473,36 +518,44 @@ async def pause_game(game_id: str, current_user: dict = Depends(get_current_user
             "bot_depth": game.get("bot_depth"),
             "maia_elo": game.get("maia_elo"),
             "player_color": game.get("player_color"),
+            "white_id": game.get("white_id"),
+            "black_id": game.get("black_id"),
             "training_mode": game.get("training_mode", False),
             "paused_at": datetime.now(timezone.utc),
+            "paused_by": user_id,
         },
         upsert=True,
     )
     return {"status": "paused", "game_id": game_id}
 
-# Resumes paused coach game
+# Resumes paused game
 @games_router.post("/{game_id}/resume")
 async def resume_game(game_id: str, current_user: dict = Depends(get_current_user)):
     from realtime import _get_state, _ensure_clock_task, restore_paused_state
     import time as _time
     db = get_db()
     user_id = str(current_user["_id"])
-    await _paused_game_or_404(db, game_id, user_id)
-    snap = await db.paused_games.find_one({"game_id": game_id})
-    if not snap:
-        raise HTTPException(status_code=404, detail="No paused snapshot for this game")
+    game = await _paused_game_or_404(db, game_id, user_id)
     state = _get_state(game_id)
     if state is None or state.result:
+        snap = await db.paused_games.find_one({"game_id": game_id})
+        if not snap:
+            raise HTTPException(status_code=404, detail="No paused snapshot for this game")
         state = await restore_paused_state(game_id)
     if state is None:
         raise HTTPException(status_code=409, detail="Could not restore game")
-    state.last_move_time = _time.time()
-    state.clock_running = True
-    _ensure_clock_task(game_id, state)
-    await db.paused_games.delete_one({"game_id": game_id})
+    mode = game.get("mode")
+    if mode in ("bot", "pass_and_play"):
+        state.last_move_time = _time.time()
+        state.clock_running = True
+        _ensure_clock_task(game_id, state)
+        await db.paused_games.delete_one({"game_id": game_id})
+    else:
+        state.clock_running = False
+        state.ready_players.clear()
     return {"status": "resumed", "game_id": game_id}
 
-# Resigns paused coach game without resuming
+# Resigns paused game without resuming
 @games_router.post("/{game_id}/resign-paused")
 async def resign_paused_game(game_id: str, current_user: dict = Depends(get_current_user)):
     from realtime import _get_state, _end_game
@@ -512,7 +565,11 @@ async def resign_paused_game(game_id: str, current_user: dict = Depends(get_curr
     snap = await db.paused_games.find_one({"game_id": game_id})
     if not snap:
         raise HTTPException(status_code=404, detail="No paused snapshot for this game")
-    winner = "black" if game.get("white_id") == user_id else "white"
+    mode = game.get("mode")
+    if mode == "pass_and_play":
+        winner = "draw"
+    else:
+        winner = "black" if game.get("white_id") == user_id else "white"
     moves = snap.get("moves") or []
     state = _get_state(game_id)
     if state is not None and not state.result:
@@ -1525,6 +1582,94 @@ async def notification_counts(current_user: dict = Depends(get_current_user)):
         {"to_id": user_id, "status": "pending"}
     )
     return {"friend_requests": friend_requests, "challenge_requests": challenge_requests}
+
+# Lists all paused friend matches for current user
+@friends_router.get("/paused")
+async def get_all_friends_paused_games(current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    user_id = str(current_user["_id"])
+    cursor = db.paused_games.find({
+        "mode": "friend",
+        "$or": [
+            {"white_id": user_id},
+            {"black_id": user_id},
+            {"user_ids": user_id},
+        ]
+    }).sort("paused_at", -1).limit(100)
+    docs = await cursor.to_list(100)
+    out = []
+    from bson import ObjectId as _OID
+    for d in docs:
+        moves = d.get("moves") or []
+        white_id = d.get("white_id")
+        black_id = d.get("black_id")
+        my_color = "white" if white_id == user_id else "black"
+        friend_id = black_id if white_id == user_id else white_id
+        friend_username = None
+        if friend_id:
+            try:
+                f_user = await db.users.find_one({"_id": _OID(friend_id)})
+                if f_user:
+                    friend_username = f_user.get("username")
+            except Exception:
+                pass
+        fen = d.get("fen", "")
+        parts = fen.split()
+        turn = "white" if len(parts) > 1 and parts[1] == "w" else "black"
+        out.append({
+            "game_id": d["game_id"],
+            "paused_at": _as_utc(d.get("paused_at")),
+            "friend_id": friend_id,
+            "friend_username": friend_username,
+            "my_color": my_color,
+            "turn": turn,
+            "is_my_turn": (turn == my_color),
+            "time_control_seconds": d.get("time_control_seconds", 600),
+            "increment_seconds": d.get("increment_seconds", 0),
+            "moves_count": len(moves),
+            "fen": fen,
+        })
+    return {"paused_games": out}
+
+# Lists paused games with a specific friend
+@friends_router.get("/{username}/paused")
+async def get_friend_paused_games(username: str, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    user_id = str(current_user["_id"])
+    target = await db.users.find_one({"username": username})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    friend_id = str(target["_id"])
+    cursor = db.paused_games.find({
+        "mode": "friend",
+        "$or": [
+            {"white_id": user_id, "black_id": friend_id},
+            {"white_id": friend_id, "black_id": user_id},
+        ]
+    }).sort("paused_at", -1).limit(50)
+    docs = await cursor.to_list(50)
+    out = []
+    for d in docs:
+        moves = d.get("moves") or []
+        white_id = d.get("white_id")
+        my_color = "white" if white_id == user_id else "black"
+        fen = d.get("fen", "")
+        parts = fen.split()
+        turn = "white" if len(parts) > 1 and parts[1] == "w" else "black"
+        out.append({
+            "game_id": d["game_id"],
+            "paused_at": _as_utc(d.get("paused_at")),
+            "friend_id": friend_id,
+            "friend_username": username,
+            "my_color": my_color,
+            "turn": turn,
+            "is_my_turn": (turn == my_color),
+            "time_control_seconds": d.get("time_control_seconds", 600),
+            "increment_seconds": d.get("increment_seconds", 0),
+            "moves_count": len(moves),
+            "fen": fen,
+        })
+    return {"paused_games": out}
 
 # Section api/analysis
 

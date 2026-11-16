@@ -5,8 +5,8 @@ import { useGameStore } from '../store/gameStore';
 import { useLeaveGameStore } from '../store/leaveGameStore';
 import { useSessionStore } from '../store/sessionStore';
 
-function GuardHost({ onResign }) {
-  const node = useLeaveGameGuard(onResign);
+function GuardHost({ onResign, onPause }) {
+  const node = useLeaveGameGuard(onResign, onPause);
   return (
     <>
       {node}
@@ -17,7 +17,7 @@ function GuardHost({ onResign }) {
 
 function resetStores() {
   useGameStore.setState({ gameId: null, mode: null, result: null });
-  useLeaveGameStore.setState({ isOpen: false, onConfirm: null, onCancel: null, leaving: false, bypassOnce: false });
+  useLeaveGameStore.setState({ isOpen: false, onConfirm: null, onCancel: null, onPause: null, canPause: false, leaving: false, bypassOnce: false });
   useSessionStore.setState({ owned: true, suspended: false, movedAway: false, idle: false, prompt: null, tabId: 'test-tab' });
 }
 
@@ -143,4 +143,35 @@ test('allowLeaveOnce bypasses the dialog once without resigning', async () => {
   expect(router.state.location.pathname).toBe('/game/g1');
   expect(useLeaveGameStore.getState().isOpen).toBe(true);
   expect(resign).not.toHaveBeenCalled();
+});
+
+test('when pause handler is provided, onPause triggers pause and proceeds with navigation', async () => {
+  const resign = jest.fn();
+  const pause = jest.fn();
+  useGameStore.setState({ gameId: 'g1', mode: 'pass_and_play', result: null });
+  const router = createMemoryRouter(
+    [
+      { path: '/game/:id', element: <GuardHost onResign={resign} onPause={pause} /> },
+      { path: '/lobby', element: <div>lobby-ok</div> },
+    ],
+    { initialEntries: ['/game/g1'] }
+  );
+  render(<RouterProvider router={router} />);
+  expect(screen.getByText('host-ok')).toBeInTheDocument();
+
+  await act(async () => {
+    await router.navigate('/lobby');
+  });
+  expect(router.state.location.pathname).toBe('/game/g1');
+  expect(useLeaveGameStore.getState().isOpen).toBe(true);
+  expect(useLeaveGameStore.getState().canPause).toBe(true);
+
+  await act(async () => {
+    await useLeaveGameStore.getState().onPause();
+  });
+  expect(pause).toHaveBeenCalledTimes(1);
+  expect(resign).not.toHaveBeenCalled();
+  expect(useLeaveGameStore.getState().isOpen).toBe(false);
+  expect(router.state.location.pathname).toBe('/lobby');
+  expect(screen.getByText('lobby-ok')).toBeInTheDocument();
 });

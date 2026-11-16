@@ -40,7 +40,7 @@ const WAYS_TO_PLAY = [
   {
     icon: '🎮',
     title: 'Pass & Play',
-    desc: 'Classic over-the-board play on a shared screen, complete with custom clock presets and PGN game import.',
+    desc: 'Classic over-the-board play on a shared screen, complete with custom clock presets, PGN game import, and session pause & resume.',
     to: '/lobby',
     action: 'Play on One Screen →'
   },
@@ -61,7 +61,7 @@ const WAYS_TO_PLAY = [
   {
     icon: '🤝',
     title: 'Play with Friends',
-    desc: 'Send direct match invitations, accept friend duels in real time, and track your head-to-head records.',
+    desc: 'Send direct match invitations, accept friend duels, pause and resume matches with friends anytime, and track head-to-head records.',
     to: '/friends',
     action: 'Challenge Friends →'
   },

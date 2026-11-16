@@ -102,7 +102,7 @@ export default function PausedGames() {
     <div className="history-page page">
       <div className="history-header">
         <h1 className="history-title">Paused Games</h1>
-        <p className="history-sub">Coach battles waiting for you — resume any time.</p>
+        <p className="history-sub">Battles waiting for you — resume any time.</p>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -134,7 +134,7 @@ export default function PausedGames() {
       {!loading && games.length === 0 && (
         <div className="history-empty">
           <span className="history-empty-icon">⏸</span>
-          <p>No paused games. Pause a coach game any time and it will wait here.</p>
+          <p>No paused games. Pause a coach or pass &amp; play game any time and it will wait here.</p>
           <p style={{ marginTop: '12px' }}>
             <Link to="/lobby" className="btn btn-secondary">Back to lobby</Link>
           </p>
@@ -153,14 +153,30 @@ export default function PausedGames() {
           >
             <div className="history-card-left">
               <span className="history-result result-draw">
-                Paused · {g.player_color === 'black' ? 'Black' : 'White'}
+                {g.mode === 'pass_and_play'
+                  ? `Paused · Move ${g.moves_count ?? 0}`
+                  : g.mode === 'friend'
+                  ? `Paused · You: ${g.player_color === 'black' ? 'Black' : 'White'}`
+                  : `Paused · ${g.player_color === 'black' ? 'Black' : 'White'}`}
               </span>
-              <span className="history-opponent">vs Coach ({engineLabel(g)})</span>
+              <span className="history-opponent">
+                {g.mode === 'pass_and_play'
+                  ? 'Pass & Play (Local)'
+                  : g.mode === 'friend'
+                  ? `vs Friend (${g.opponent_username || 'Friend'})`
+                  : `vs Coach (${engineLabel(g)})`}
+              </span>
               <span className="history-mode">{g.moves_count ?? 0} moves played</span>
             </div>
 
             <div className="history-card-meta">
-              <span className="history-moves">{g.training_mode ? 'Training' : 'Casual'}</span>
+              <span className="history-moves">
+                {g.mode === 'pass_and_play'
+                  ? 'Pass & Play'
+                  : g.mode === 'friend'
+                  ? 'Friend Match'
+                  : g.training_mode ? 'Training' : 'Casual'}
+              </span>
               <span className="history-date">{formatDate(g.paused_at)}</span>
             </div>
 

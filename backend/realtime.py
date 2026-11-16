@@ -481,6 +481,10 @@ async def handle_game_socket(
                         state.last_move_time = time.time()
                         state.clock_running = True
                         _ensure_clock_task(game_id, state)
+                        try:
+                            await get_db().paused_games.delete_one({"game_id": game_id})
+                        except Exception:
+                            pass
                         await manager.broadcast(game_id, {"type": "both_ready", "payload": {}})
                     else:
                         # Notify this player they are queued
@@ -845,6 +849,11 @@ async def _end_game(game_id: str, state: GameState, result: str):
         except Exception:
             pass
 
+
+    try:
+        await db.paused_games.delete_one({"game_id": game_id})
+    except Exception:
+        pass
 
     await manager.broadcast(game_id, {
         "type": "game_over",

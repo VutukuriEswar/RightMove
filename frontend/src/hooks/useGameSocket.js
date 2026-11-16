@@ -151,6 +151,12 @@ export function useGameSocket(gameId) {
           useGameStore.setState({ waitingForOpponent: true });
           break;
 
+        case 'game_paused':
+          useGameStore.setState({
+            gamePausedBy: msg.payload?.paused_by_username || 'Opponent',
+          });
+          break;
+
         default:
           break;
       }

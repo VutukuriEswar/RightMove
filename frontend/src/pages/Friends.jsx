@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { friendsApi } from '../lib/api';
+import { friendsApi, gamesApi } from '../lib/api';
 import FriendCard from '../components/friends/FriendCard';
 
 function tcLabel(tc, inc) {
@@ -18,6 +18,7 @@ export default function Friends() {
   const [challengesIn, setChallengesIn] = useState([]);
   const [challengesOut, setChallengesOut] = useState([]);
   const [records, setRecords] = useState({});
+  const [pausedByFriend, setPausedByFriend] = useState({});
   const [newFriendName, setNewFriendName] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -28,6 +29,21 @@ export default function Friends() {
   const [activeTab, setActiveTab] = useState('all');
   const sentChallengeIds = useRef(new Set());
 
+  const loadPausedMatches = useCallback(() => {
+    friendsApi
+      .pausedMatches()
+      .then((data) => {
+        const grouped = {};
+        (data.paused_games || []).forEach((g) => {
+          if (!g.friend_username) return;
+          if (!grouped[g.friend_username]) grouped[g.friend_username] = [];
+          grouped[g.friend_username].push(g);
+        });
+        setPausedByFriend(grouped);
+      })
+      .catch(() => {});
+  }, []);
+
   const loadInbox = useCallback(() => {
     friendsApi
       .incomingChallenges()
@@ -37,7 +53,8 @@ export default function Friends() {
       .outgoingChallenges()
       .then((d) => setChallengesOut(d.challenges || []))
       .catch(() => {});
-  }, []);
+    loadPausedMatches();
+  }, [loadPausedMatches]);
 
   const loadFriends = useCallback(() => {
     friendsApi
@@ -215,6 +232,27 @@ export default function Friends() {
       setError(err.message);
     } finally {
       setBusyUser(null);
+    }
+  };
+
+  const handleResumeGame = async (gameId) => {
+    setError(null);
+    try {
+      await gamesApi.resumeGame(gameId);
+      navigate(`/game/${gameId}`);
+    } catch (err) {
+      setError(err.message || 'Failed to resume game');
+    }
+  };
+
+  const handleResignPausedGame = async (gameId) => {
+    setError(null);
+    try {
+      await gamesApi.resignPaused(gameId);
+      loadPausedMatches();
+      loadFriends();
+    } catch (err) {
+      setError(err.message || 'Failed to resign paused game');
     }
   };
 
@@ -416,6 +454,9 @@ export default function Friends() {
                   onChallenge={handleChallenge}
                   onChallengePgn={handleChallengePgn}
                   onRemove={handleRemove}
+                  pausedMatches={pausedByFriend[f.username] || []}
+                  onResumeGame={handleResumeGame}
+                  onResignPaused={handleResignPausedGame}
                 />
               </div>
             ))}

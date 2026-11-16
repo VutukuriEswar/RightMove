@@ -10,7 +10,7 @@ const rangeFill = (v, min, max) => ({
 });
 const USER_ARROW_COLOR = '#10b981';
 const BOT_ARROW_COLOR = '#f59e0b';
-const CANDIDATE_DEPTH = 18;
+const CANDIDATE_DEPTH = 20;
 
 class LabViewBoundary extends Component {
   constructor(props) {
@@ -48,6 +48,14 @@ function fmtUserScore(c, userIsWhite) {
   if (c.is_mate) return c.mate_str || (userIsWhite ? '+M' : '-M');
   const v = userIsWhite ? c.score_white : -c.score_white;
   return `${v > 0 ? '+' : ''}${Number(v).toFixed(2)}`;
+}
+
+function evalScoreClass(c, userIsWhite) {
+  if (c.is_mate) {
+    return c.mate_str?.startsWith('-') ? 'is-negative' : 'is-positive';
+  }
+  const v = userIsWhite ? c.score_white : -c.score_white;
+  return v >= 0 ? 'is-positive' : 'is-negative';
 }
 
 function fmtUserWin(c, userIsWhite) {
@@ -231,47 +239,45 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
           {busy && <div className="lab-shell-progress" aria-hidden="true" />}
           <div className="lab-header">
             <div className="lab-title">
-              <span className="lab-crest">🔬</span>
-              <div>
-                <span className="lab-eyebrow">Coach mode · Engine analysis</span>
-                <h2>Candidate Lab</h2>
-                <p>
-                  {candidates.length} moves evaluated at depth {CANDIDATE_DEPTH}
-                  {selected && ` · Focus: ${selected.move_san}`}
-                </p>
-              </div>
+              <h2>Candidate Lab</h2>
             </div>
             <div className="lab-header-actions">
               {labView === 'chain' && (
                 <button
                   className="lab-header-btn interactive"
                   onClick={() => { setLabView('candidates'); setSelectedRank(null); }}
+                  title="Back to candidates"
+                  aria-label="Back to candidates"
                 >
-                  ← Candidates
+                  ←
                 </button>
               )}
               {selected && labView !== 'chain' && (
                 <button
                   className="lab-header-btn interactive"
                   onClick={() => setSelectedRank(null)}
+                  title="Back to all candidates"
+                  aria-label="Back to all candidates"
                 >
-                  ← All Candidates
+                  ←
                 </button>
               )}
               <button
                 className="lab-header-btn interactive"
                 disabled={busy || !canGenerate}
                 onClick={generate}
-                title={!canGenerate ? 'Available on your turn only' : 'Regenerate candidate moves for this position'}
+                title={!canGenerate ? 'Available on your turn only' : busy ? 'Evaluating…' : 'Regenerate candidate moves'}
+                aria-label="Regenerate candidates"
               >
-                {busy ? 'Evaluating…' : '🔄 Regenerate'}
+                <span className={busy ? 'spin-icon' : ''}>🔄</span>
               </button>
               <button
                 className="lab-header-btn interactive"
                 onClick={clearAll}
-                title="Clear candidates and return to slider"
+                title="Clear candidates"
+                aria-label="Clear candidates"
               >
-                ✕ Clear
+                ✕
               </button>
             </div>
           </div>
@@ -304,12 +310,6 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
             {labView === 'chain' && chain ? (
               <div className="lab-chainview">
                 <div className="lab-chainview-head">
-                  <button
-                    className="btn-sm interactive"
-                    onClick={() => { setLabView('candidates'); setSelectedRank(null); }}
-                  >
-                    ← Back to candidates
-                  </button>
                   <h3>Next moves from {chainOrigin}</h3>
                 </div>
                 <p className="lab-chain-legend">
@@ -401,28 +401,38 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                 {selected ? (
                   <div className="lab-focus">
                     <div className="lab-focus-board">
-                      <div className="lab-card-rank">
-                        <span className="lab-medal">{RANK_MEDALS[selected.rank - 1] || `#${selected.rank}`}</span>
-                        <span className="lab-san">{selected.move_san}</span>
-                        <span className="lab-quality">{selected.quality}</span>
-                      </div>
-                      <div className="lab-board">
-                        <Board2D
-                          id={`lab-focus-${selected.rank}`}
-                          fen={selected.fen_after || baseFen}
-                          disabled
-                          framed={false}
-                          playerColor={playerColor}
-                          arrows={[{ from: selected.move_uci.slice(0, 2), to: selected.move_uci.slice(2, 4) }]}
-                          lastMove={{ from: selected.move_uci.slice(0, 2), to: selected.move_uci.slice(2, 4) }}
-                        />
-                      </div>
-                      <div className="lab-card-meta">
-                        <span className="mono">{fmtUserScore(selected, userIsWhite)}</span>
-                        <span className="mono">{fmtUserWin(selected, userIsWhite)}</span>
-                        <span className="lab-delta">
-                          {selected.rank === 1 ? 'engine top' : `−${((selected.cp_delta || 0) / 100).toFixed(2)} vs #1 (${candidates[0]?.move_san})`}
-                        </span>
+                      <div className="lab-focus-board-inner">
+                        <div className="lab-card-rank">
+                          <div className="lab-focus-rank-left">
+                            <span className="lab-medal">{RANK_MEDALS[selected.rank - 1] || `#${selected.rank}`}</span>
+                            <span className="lab-san">{selected.move_san}</span>
+                          </div>
+                          <span className={`lab-quality tone-${qualityTone(selected.quality)}`}>{selected.quality}</span>
+                        </div>
+                        <div className="lab-board">
+                          <Board2D
+                            id={`lab-focus-${selected.rank}`}
+                            fen={selected.fen_after || baseFen}
+                            disabled
+                            framed={false}
+                            playerColor={playerColor}
+                            arrows={[{ from: selected.move_uci.slice(0, 2), to: selected.move_uci.slice(2, 4) }]}
+                            lastMove={{ from: selected.move_uci.slice(0, 2), to: selected.move_uci.slice(2, 4) }}
+                          />
+                        </div>
+                        <div className="lab-card-meta">
+                          <div className="lab-focus-meta-left">
+                            <span className={`lab-eval-chip mono ${evalScoreClass(selected, userIsWhite)}`} title="Engine evaluation (pawns)">
+                              {fmtUserScore(selected, userIsWhite)}
+                            </span>
+                            <span className="lab-win-chip mono" title="Estimated win probability">
+                              {fmtUserWin(selected, userIsWhite)}
+                            </span>
+                          </div>
+                          <span className="lab-delta">
+                            {selected.rank === 1 ? 'engine top' : `−${((selected.cp_delta || 0) / 100).toFixed(2)} vs #1 (${candidates[0]?.move_san})`}
+                          </span>
+                        </div>
                       </div>
                     </div>
                     <div className="lab-focus-info" role="region" aria-label="Candidate details">
@@ -436,8 +446,15 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                       <div className="lab-detail-head">
                         <span className="lab-medal">{RANK_MEDALS[selected.rank - 1] || `#${selected.rank}`}</span>
                         <strong>{selected.move_san}</strong>
-                        <span className="lab-quality">{selected.quality}</span>
-                        <span className="mono">{fmtUserScore(selected, userIsWhite)} · {fmtUserWin(selected, userIsWhite)}</span>
+                        <span className={`lab-quality tone-${qualityTone(selected.quality)}`}>{selected.quality}</span>
+                        <div className="lab-detail-chips">
+                          <span className={`lab-eval-chip mono ${evalScoreClass(selected, userIsWhite)}`} title="Engine evaluation (pawns)">
+                            {fmtUserScore(selected, userIsWhite)}
+                          </span>
+                          <span className="lab-win-chip mono" title="Estimated win probability">
+                            {fmtUserWin(selected, userIsWhite)}
+                          </span>
+                        </div>
                       </div>
                       <p className="lab-rank-why">
                         {selected.rank === 1
@@ -445,21 +462,38 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                           : `Ranked #${selected.rank} — concedes ${((selected.cp_delta || 0) / 100).toFixed(2)} pawns vs #1 (${candidates[0]?.move_san}).`}
                       </p>
 
+                      {selected.pv_san && (
+                        <div className="lab-continuation-line">
+                          <span className="lab-continuation-label">Continuation</span>
+                          <span className="lab-continuation-moves mono">{selected.pv_san}</span>
+                        </div>
+                      )}
+
                       {explainBusy && <p className="lab-empty">Explaining {selected.move_san}…</p>}
                       {explainError && <div className="alert alert-error" style={{ fontSize: '0.75rem' }}>{explainError}</div>}
                       {explain && !explainBusy && (
                         <>
+                          {explain.narrative && (
+                            <div className="lab-coach-narrative">
+                              <span className="lab-narrative-tag">Insight</span>
+                              <p>{explain.narrative}</p>
+                            </div>
+                          )}
                           <div className="lab-pros-cons">
                             <h5>✅ Advantages</h5>
                             <p><strong>{explain.thing_1?.title || 'Strengths'}</strong></p>
                             <p>{explain.thing_1?.summary}</p>
-                            {(explain.thing_1?.reasons || []).map((r, i) => <p key={i}>• {r}</p>)}
+                            {(explain.thing_1?.reasons || [])
+                              .filter((r) => r && r !== explain.thing_1?.summary)
+                              .map((r, i) => <p key={i}>• {r}</p>)}
                           </div>
                           <div className="lab-pros-cons cons">
                             <h5>⚠️ Disadvantages</h5>
                             <p><strong>{explain.thing_2?.title || 'Weaknesses'}</strong></p>
                             <p>{explain.thing_2?.summary}</p>
-                            {(explain.thing_2?.reasons_to_avoid || []).map((r, i) => <p key={i}>• {r}</p>)}
+                            {(explain.thing_2?.reasons_to_avoid || [])
+                              .filter((r) => r && r !== explain.thing_2?.summary)
+                              .map((r, i) => <p key={i}>• {r}</p>)}
                           </div>
                         </>
                       )}
@@ -540,8 +574,12 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                           />
                         </div>
                         <div className="lab-card-meta">
-                          <span className="lab-eval-chip mono">{fmtUserScore(c, userIsWhite)}</span>
-                          <span className="lab-win-chip mono">{fmtUserWin(c, userIsWhite)}</span>
+                          <span className={`lab-eval-chip mono ${evalScoreClass(c, userIsWhite)}`} title="Engine evaluation (pawns)">
+                            {fmtUserScore(c, userIsWhite)}
+                          </span>
+                          <span className="lab-win-chip mono" title="Estimated win probability">
+                            {fmtUserWin(c, userIsWhite)}
+                          </span>
                           <span className="lab-delta">
                             {c.rank === 1 ? 'engine top' : `−${((c.cp_delta || 0) / 100).toFixed(2)} vs #1`}
                           </span>
@@ -563,12 +601,7 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
           <div className="lab-empty-shell">
             <header className="lab-empty-header">
               <div className="lab-title">
-                <span className="lab-crest">🔬</span>
-                <div>
-                  <span className="lab-eyebrow">Coach mode · Engine analysis</span>
-                  <h2>Candidate Lab</h2>
-                  <p>Rank your options before you commit to a move.</p>
-                </div>
+                <h2>Candidate Lab</h2>
               </div>
             </header>
 

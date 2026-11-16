@@ -157,14 +157,14 @@ const InnerScene = ({ isDark }) => {
       <pointLight position={[ 8,  12,  6]} intensity={isDark ? 2.8 : 2.0} color="#FFD580" />
       <pointLight position={[-10,  5,  4]} intensity={isDark ? 1.5 : 1.0} color="#FF9A3C" />
 
-      <fog attach="fog" args={[isDark ? '#181110' : '#EAD5A8', 10, 45]} />
+      <fog key={isDark ? 'dark-fog' : 'light-fog'} attach="fog" args={[isDark ? '#181110' : '#EAD5A8', 10, 45]} />
 
       <Sparkles 
         position={[0, 0, -15]}
         count={400} scale={[60, 45, 10]} 
         size={isDark ? 3.5 : 4.5} 
         speed={0.15} 
-        color={isDark ? "#D4AF37" : "#5C1800"} 
+        color={isDark ? "#D4AF37" : "#8B2500"} 
         opacity={isDark ? 0.65 : 0.7} 
       />
       <Sparkles 
@@ -172,7 +172,7 @@ const InnerScene = ({ isDark }) => {
         count={250} scale={[50, 40, 10]} 
         size={isDark ? 2.5 : 3.5} 
         speed={0.25} 
-        color={isDark ? "#FFF4E0" : "#1C1008"} 
+        color={isDark ? "#FFF4E0" : "#A67C52"} 
         opacity={isDark ? 0.8 : 0.6} 
       />
 
@@ -206,6 +206,7 @@ export const GlobalCanvas = () => {
       top: 0, left: 0, right: 0, bottom: 0,
       width: '100%', height: '100dvh',
       zIndex: -1,
+      pointerEvents: 'none',
       background: isDark ? `
         radial-gradient(ellipse at 72% 58%, rgba(212,175,55,0.08) 0%, transparent 60%),
         radial-gradient(ellipse at 18% 28%, rgba(139,37,0,0.12) 0%, transparent 55%),
@@ -217,6 +218,7 @@ export const GlobalCanvas = () => {
       `,
     }}>
       <Canvas
+        gl={{ alpha: true }}
         camera={{ position: [0, 0, 10], fov: 60 }}
         eventSource={document.getElementById('root')}
         eventPrefix="client"

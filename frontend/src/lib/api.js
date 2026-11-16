@@ -158,6 +158,8 @@ export const friendsApi = {
   declineChallenge: (id) => api.post(`/friends/challenges/${encodeURIComponent(id)}/decline`, {}),
   cancelChallenge: (id) => api.delete(`/friends/challenges/${encodeURIComponent(id)}`),
   notifCounts: () => api.get('/friends/notifications/counts'),
+  pausedMatches: () => api.get('/friends/paused'),
+  pausedWithFriend: (username) => api.get(`/friends/${encodeURIComponent(username)}/paused`),
 };
 
 export const coachApi = {
