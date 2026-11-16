@@ -63,7 +63,19 @@ function fmtUserWin(c, userIsWhite) {
   return `${Math.round(w * 100)}%`;
 }
 
+function renderText(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') {
+    return val.text || val.summary || val.title || val.message || '';
+  }
+  return String(val);
+}
+
 function plainNote(text) {
+  if (typeof text === 'object' && text !== null) {
+    text = text.text || text.summary || text.explanation || text.title || '';
+  }
   return String(text || '').replace(/\*\*/g, '');
 }
 
@@ -231,6 +243,22 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
   const pairFirstIsUser = chainPairs.length > 0 && chainPairs[0].length > 0
     ? !!chainPairs[0][0].is_user_step
     : true;
+
+  const currentIndex = selected ? candidates.findIndex((c) => c.rank === selected.rank) : -1;
+  const hasPrev = currentIndex > 0;
+  const hasNext = currentIndex >= 0 && currentIndex < candidates.length - 1;
+
+  const selectPrev = useCallback(() => {
+    if (hasPrev) {
+      selectCandidate(candidates[currentIndex - 1]);
+    }
+  }, [hasPrev, currentIndex, candidates, selectCandidate]);
+
+  const selectNext = useCallback(() => {
+    if (hasNext) {
+      selectCandidate(candidates[currentIndex + 1]);
+    }
+  }, [hasNext, currentIndex, candidates, selectCandidate]);
 
   return (
     <>
@@ -402,12 +430,27 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                   <div className="lab-focus">
                     <div className="lab-focus-board">
                       <div className="lab-focus-board-inner">
-                        <div className="lab-card-rank">
-                          <div className="lab-focus-rank-left">
-                            <span className="lab-medal">{RANK_MEDALS[selected.rank - 1] || `#${selected.rank}`}</span>
-                            <span className="lab-san">{selected.move_san}</span>
-                          </div>
-                          <span className={`lab-quality tone-${qualityTone(selected.quality)}`}>{selected.quality}</span>
+                        <div className="lab-focus-board-nav">
+                          <button
+                            type="button"
+                            className="lab-nav-btn interactive"
+                            disabled={!hasPrev}
+                            onClick={selectPrev}
+                            title={hasPrev ? `Previous: #${candidates[currentIndex - 1].rank} ${candidates[currentIndex - 1].move_san}` : 'First candidate'}
+                            aria-label="Previous candidate"
+                          >
+                            ◀ Prev
+                          </button>
+                          <button
+                            type="button"
+                            className="lab-nav-btn interactive"
+                            disabled={!hasNext}
+                            onClick={selectNext}
+                            title={hasNext ? `Next: #${candidates[currentIndex + 1].rank} ${candidates[currentIndex + 1].move_san}` : 'Last candidate'}
+                            aria-label="Next candidate"
+                          >
+                            Next ▶
+                          </button>
                         </div>
                         <div className="lab-board">
                           <Board2D
@@ -420,18 +463,32 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                             lastMove={{ from: selected.move_uci.slice(0, 2), to: selected.move_uci.slice(2, 4) }}
                           />
                         </div>
-                        <div className="lab-card-meta">
-                          <div className="lab-focus-meta-left">
-                            <span className={`lab-eval-chip mono ${evalScoreClass(selected, userIsWhite)}`} title="Engine evaluation (pawns)">
+                        <div className="lab-focus-board-metrics">
+                          <div className="lab-metric-card">
+                            <span className="lab-metric-label">ENGINE EVAL</span>
+                            <span className={`lab-metric-val mono ${evalScoreClass(selected, userIsWhite)}`}>
                               {fmtUserScore(selected, userIsWhite)}
                             </span>
-                            <span className="lab-win-chip mono" title="Estimated win probability">
+                            <span className="lab-metric-sub">{selected.rank === 1 ? 'Top line' : `vs #1 (${candidates[0]?.move_san || ''})`}</span>
+                          </div>
+                          <div className="lab-metric-card">
+                            <span className="lab-metric-label">WIN PROBABILITY</span>
+                            <span className="lab-metric-val mono win-val">
                               {fmtUserWin(selected, userIsWhite)}
                             </span>
+                            <div className="lab-metric-bar">
+                              <div className="lab-metric-fill" style={{ width: fmtUserWin(selected, userIsWhite) }} />
+                            </div>
                           </div>
-                          <span className="lab-delta">
-                            {selected.rank === 1 ? 'engine top' : `−${((selected.cp_delta || 0) / 100).toFixed(2)} vs #1 (${candidates[0]?.move_san})`}
-                          </span>
+                          <div className="lab-metric-card">
+                            <span className="lab-metric-label">MOVE RANK</span>
+                            <span className="lab-metric-val mono">
+                              #{selected.rank}
+                            </span>
+                            <span className="lab-metric-sub">
+                              {selected.rank === 1 ? 'Best choice' : `Concedes ${((selected.cp_delta || 0) / 100).toFixed(2)} pawns`}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -447,14 +504,6 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                         <span className="lab-medal">{RANK_MEDALS[selected.rank - 1] || `#${selected.rank}`}</span>
                         <strong>{selected.move_san}</strong>
                         <span className={`lab-quality tone-${qualityTone(selected.quality)}`}>{selected.quality}</span>
-                        <div className="lab-detail-chips">
-                          <span className={`lab-eval-chip mono ${evalScoreClass(selected, userIsWhite)}`} title="Engine evaluation (pawns)">
-                            {fmtUserScore(selected, userIsWhite)}
-                          </span>
-                          <span className="lab-win-chip mono" title="Estimated win probability">
-                            {fmtUserWin(selected, userIsWhite)}
-                          </span>
-                        </div>
                       </div>
                       <p className="lab-rank-why">
                         {selected.rank === 1
@@ -462,41 +511,40 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                           : `Ranked #${selected.rank} — concedes ${((selected.cp_delta || 0) / 100).toFixed(2)} pawns vs #1 (${candidates[0]?.move_san}).`}
                       </p>
 
-                      {selected.pv_san && (
-                        <div className="lab-continuation-line">
-                          <span className="lab-continuation-label">Continuation</span>
-                          <span className="lab-continuation-moves mono">{selected.pv_san}</span>
-                        </div>
-                      )}
-
                       {explainBusy && <p className="lab-empty">Explaining {selected.move_san}…</p>}
                       {explainError && <div className="alert alert-error" style={{ fontSize: '0.75rem' }}>{explainError}</div>}
-                      {explain && !explainBusy && (
-                        <>
-                          {explain.narrative && (
-                            <div className="lab-coach-narrative">
-                              <span className="lab-narrative-tag">Insight</span>
-                              <p>{explain.narrative}</p>
+                      {explain && !explainBusy && (() => {
+                        const thing1Title = renderText(explain.thing_1?.title) || 'Strategic Purpose & Goals';
+                        const thing1Summary = renderText(explain.thing_1?.summary);
+                        const thing1Reasons = (explain.thing_1?.reasons || explain.narrative?.advantages || [])
+                          .map(renderText)
+                          .filter((r) => r && r !== thing1Summary);
+
+                        const thing2Title = renderText(explain.thing_2?.title) || 'Move Defects & Flaws';
+                        const thing2Summary = renderText(explain.thing_2?.summary);
+                        const thing2Reasons = (explain.thing_2?.reasons_to_avoid || [])
+                          .map(renderText)
+                          .filter((r) => r && r !== thing2Summary);
+
+                        return (
+                          <>
+                            <div className="lab-pros-cons">
+                              <h5>✅ ADVANTAGES</h5>
+                              <p><strong>{thing1Title}</strong></p>
+                              {thing1Summary && <p>{thing1Summary}</p>}
+                              {thing1Reasons.map((r, i) => <p key={i}>• {r}</p>)}
+                              {!thing1Summary && thing1Reasons.length === 0 && <p>Occupies key squares and maintains tactical stability.</p>}
                             </div>
-                          )}
-                          <div className="lab-pros-cons">
-                            <h5>✅ Advantages</h5>
-                            <p><strong>{explain.thing_1?.title || 'Strengths'}</strong></p>
-                            <p>{explain.thing_1?.summary}</p>
-                            {(explain.thing_1?.reasons || [])
-                              .filter((r) => r && r !== explain.thing_1?.summary)
-                              .map((r, i) => <p key={i}>• {r}</p>)}
-                          </div>
-                          <div className="lab-pros-cons cons">
-                            <h5>⚠️ Disadvantages</h5>
-                            <p><strong>{explain.thing_2?.title || 'Weaknesses'}</strong></p>
-                            <p>{explain.thing_2?.summary}</p>
-                            {(explain.thing_2?.reasons_to_avoid || [])
-                              .filter((r) => r && r !== explain.thing_2?.summary)
-                              .map((r, i) => <p key={i}>• {r}</p>)}
-                          </div>
-                        </>
-                      )}
+                            <div className="lab-pros-cons cons">
+                              <h5>⚠️ DISADVANTAGES</h5>
+                              <p><strong>{thing2Title}</strong></p>
+                              {thing2Summary && <p>{thing2Summary}</p>}
+                              {thing2Reasons.map((r, i) => <p key={i}>• {r}</p>)}
+                              {!thing2Summary && thing2Reasons.length === 0 && <p>This move has no defects.</p>}
+                            </div>
+                          </>
+                        );
+                      })()}
 
                       <div className="lab-detail-actions">
                         <button

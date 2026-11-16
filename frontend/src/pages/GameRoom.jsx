@@ -1015,7 +1015,7 @@ export default function GameRoom() {
                     {topIsActive && (
                       <span className={`turn-badge${trainingMode && !isPassAndPlay ? ' thinking-badge' : ''}`}>
                         <span className="turn-dot" />
-                        {trainingMode && !isPassAndPlay ? 'Opponent thinking' : 'TO MOVE'}
+                        {!isPassAndPlay ? 'Opponent Thinking' : 'TO MOVE'}
                       </span>
                     )}
                   </div>

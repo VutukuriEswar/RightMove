@@ -1041,29 +1041,21 @@
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 6px 16px;
+  justify-content: center;
+  gap: 8px;
+  padding: 5px 12px;
   background: var(--royal-card);
   border: 1px solid var(--royal-border);
   border-radius: 12px;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  min-width: min(180px, 45%);
-  max-width: min(72%, 360px);
   width: fit-content;
+  max-width: min(90%, 380px);
   margin: 0 auto;
   align-self: center;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   box-sizing: border-box;
-}
-
-.player-info.top {
-  border-left: 3px solid rgba(139, 37, 0, 0.55);
-}
-
-.player-info.bottom {
-  border-left: 3px solid var(--royal-gold, #D4AF37);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .player-info.active-turn {
@@ -1080,22 +1072,23 @@
 .turn-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-family: 'Cinzel', serif;
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   color: var(--royal-gold, #D4AF37);
   background: rgba(212, 175, 55, 0.12);
   border: 1px solid rgba(212, 175, 55, 0.55);
   border-radius: 999px;
-  padding: 3px 10px;
+  padding: 2.5px 8px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .turn-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--royal-gold, #D4AF37);
   box-shadow: 0 0 8px rgba(212, 175, 55, 0.9);
@@ -1143,9 +1136,8 @@
 .player-info-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  flex: 1;
 }
 
 .player-info-right {
@@ -1156,17 +1148,22 @@
   min-width: 0;
 }
 
+.player-info-right:empty {
+  display: none;
+}
+
 .player-name {
   font-family: 'Cinzel', serif;
   font-weight: 600;
-  font-size: 0.9rem;
-  letter-spacing: 0.06em;
+  font-size: 0.88rem;
+  letter-spacing: 0.05em;
   color: var(--royal-ink);
   min-width: 0;
+  max-width: 130px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+  flex-shrink: 1;
 }
 
 @media (max-width: 600px) {
@@ -1182,14 +1179,17 @@
     border-radius: 8px;
   }
   .player-info {
-    padding: 5px 10px;
+    padding: 4px 10px;
     gap: 6px;
-    max-width: min(85%, 280px);
+    width: fit-content;
+    max-width: min(92%, 300px);
     border-radius: 10px;
   }
   .player-name {
     font-size: 0.78rem;
     max-width: 90px;
+    min-width: 0;
+    flex-shrink: 1;
   }
   .player-avatar {
     width: 24px;
@@ -1205,15 +1205,15 @@
 }
 
 .player-avatar {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--royal-crimson, #8B2500), #4a1200);
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: 'Cinzel', serif;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 700;
   color: var(--royal-gold, #D4AF37);
   border: 1.5px solid var(--royal-border);
@@ -1395,9 +1395,9 @@
 }
 
 .coach-board-area .player-info {
-  padding: 6px 14px;
+  padding: 5px 12px;
   width: fit-content;
-  max-width: min(70%, 340px);
+  max-width: min(90%, 380px);
   margin: 0 auto;
   align-self: center;
 }
@@ -1459,9 +1459,9 @@
 }
 
 .coach-move-list {
-  height: clamp(92px, 12vh, 124px);
-  min-height: 84px;
-  max-height: 124px;
+  height: clamp(210px, 28vh, 320px);
+  min-height: 200px;
+  max-height: 340px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -1469,6 +1469,12 @@
   border: 1px solid var(--royal-border);
   border-radius: 10px;
   overflow: hidden;
+}
+
+.coach-move-list .move-list {
+  flex: 1;
+  min-height: 0;
+  height: auto;
 }
 
 .coach-move-list-header {

@@ -2115,6 +2115,7 @@ class FutureSimulator:
                 captured_name = cls.PIECE_NAMES.get(captured_piece.piece_type, "") if captured_piece else ""
 
                 fen_before = board.fen()
+                board_before = board.copy()
                 board.push(initial_move)
                 fen_after = board.fen()
 
@@ -2132,8 +2133,7 @@ class FutureSimulator:
                 else:
                     user_score_display = f"+{user_score:.2f}" if user_score > 0 else f"{user_score:.2f}"
 
-                note = cls._generate_step_note(moving_side, player_role, piece_name, san, from_sq, to_sq,
-                                                is_capture, captured_name, board.is_check(), board.is_checkmate(), True)
+                note = cls._generate_step_note(board_before, initial_move, moving_side, player_role, san, eval_data)
 
                 steps.append({
                     "step_index": 0, "is_initial_move": True, "side": moving_side,
@@ -2161,6 +2161,7 @@ class FutureSimulator:
             is_user_step = (moving_side == user_color_str)
             player_role = "You" if is_user_step else "Bot"
             fen_before = board.fen()
+            board_before = board.copy()
 
             best_move, eval_data = await cls._step_analysis(stockfish, board, depth=depth)
             if not best_move or best_move not in board.legal_moves:
@@ -2192,8 +2193,7 @@ class FutureSimulator:
             else:
                 user_score_display = f"+{user_score:.2f}" if user_score > 0 else f"{user_score:.2f}"
 
-            note = cls._generate_step_note(moving_side, player_role, piece_name, san, from_sq, to_sq,
-                                            is_capture, captured_name, board.is_check(), board.is_checkmate(), False)
+            note = cls._generate_step_note(board_before, best_move, moving_side, player_role, san, eval_data)
             arrow_color = "#10b981" if is_user_step else "#f59e0b"
 
             steps.append({
@@ -2329,42 +2329,173 @@ class FutureSimulator:
         return {"white_points": w_points, "black_points": b_points,
                 "diff_white": w_points - b_points, "white_pieces": w_pieces, "black_pieces": b_pieces}
 
-    # Generates narrative note for simulation step
+    # Generates rich multi-line chess explanation for simulation step
     @classmethod
-    def _generate_step_note(cls, moving_side, player_role, piece_name, san, from_sq, to_sq,
-                            is_capture, captured_name, is_check, is_mate, is_initial):
-        if player_role == "You":
-            if is_mate:
-                return f"Checkmate! Your {san} ends the game."
+    def _generate_step_note(cls, board_before, move, moving_side, player_role, san, eval_data=None):
+        from_sq = move.from_square
+        to_sq = move.to_square
+        from_sq_name = chess.square_name(from_sq)
+        to_sq_name = chess.square_name(to_sq)
+        moving_color = board_before.turn
+        opp_color = not moving_color
+        moving_piece = board_before.piece_at(from_sq)
+        piece_name = cls.PIECE_NAMES.get(moving_piece.piece_type, "piece") if moving_piece else "piece"
+        target_piece = board_before.piece_at(to_sq)
+        is_capture = board_before.is_capture(move)
+        is_castling = board_before.is_castling(move)
+
+        board_after = board_before.copy()
+        board_after.push(move)
+
+        is_check = board_after.is_check()
+        is_mate = board_after.is_checkmate()
+
+        is_user = (player_role == "You")
+        actor = "You" if is_user else ("White" if moving_color == chess.WHITE else "Black")
+        opp_str = "the bot" if is_user else ("Black" if moving_color == chess.WHITE else "White")
+        opp_possessive = "the bot's" if is_user else f"{opp_str}'s"
+
+        def verb(base):
+            if is_user:
+                return base
+            if base.endswith("ch") or base.endswith("sh"):
+                return base + "es"
+            if base.endswith("y") and not base.endswith("ey") and not base.endswith("ay"):
+                return base[:-1] + "ies"
+            return base + "s"
+
+        lines = []
+
+        # Resolves immediate action and checkmate conditions
+        if is_mate:
+            lines.append(f"{actor} {verb('play')} {san}, delivering an unstoppable checkmate on {to_sq_name}! The {opp_possessive} king has no legal escape squares.")
+            lines.append("This decisive move concludes the game immediately.")
+            return " ".join(lines)
+
+        # Classifies move action and tactical premise
+        if is_castling:
+            castle_side = "kingside" if chess.square_file(to_sq) == 6 else "queenside"
+            lines.append(f"{actor} {verb('castle')} {castle_side} ({san}), tucking the king safely behind the protective pawn shield.")
+            lines.append("The rook activates toward the center along the back rank, bringing the major pieces into harmony.")
+        elif is_capture:
+            cap_val = cls.PIECE_VALUES.get(target_piece.piece_type, 1) if target_piece else 1
+            my_val = cls.PIECE_VALUES.get(moving_piece.piece_type, 1) if moving_piece else 1
+            captured_name = cls.PIECE_NAMES.get(target_piece.piece_type, "piece") if target_piece else "piece"
             if is_check:
-                if is_capture:
-                    return f"You take the {captured_name} on {to_sq} with {san} — and give check."
-                return f"You give check with {san}, putting their king in immediate danger."
-            if is_capture:
-                return f"You take their {captured_name} on {to_sq} with {san}."
-            if san in ["O-O", "O-O-O"]:
-                return f"You castle ({san}): your king gets safe and your rook joins the game."
-            if piece_name == "pawn" and to_sq in ["d4", "e4", "d5", "e5"]:
-                return f"You push your pawn to {to_sq} ({san}) and take space in the center."
-            if piece_name in ["knight", "bishop"]:
-                return f"You bring your {piece_name} to {to_sq} ({san}), getting a new piece into the game."
-            return f"You move your {piece_name} ({san}) to a better square."
+                lines.append(f"{actor} {verb('take')} the {captured_name} on {to_sq_name} with {san}, delivering a forcing check against the {opp_possessive} king.")
+            elif cap_val > my_val:
+                lines.append(f"{actor} {verb('capture')} the {captured_name} on {to_sq_name} with {san}, winning decisive material advantage.")
+            elif cap_val == my_val:
+                lines.append(f"{actor} {verb('trade')} the {piece_name} for the {captured_name} on {to_sq_name} ({san}), clarifying central tension.")
+            else:
+                lines.append(f"{actor} {verb('sacrifice')} the {piece_name} for the {captured_name} on {to_sq_name} ({san}) to rip open defensive lines.")
+        elif is_check:
+            lines.append(f"{actor} {verb('deliver')} a forcing check with {san} on {to_sq_name}, seizing the tempo and disrupting {opp_possessive} defense.")
         else:
-            if is_mate:
-                return f"The bot checkmates you on {to_sq} with {san}."
-            if is_check:
-                if is_capture:
-                    return f"The bot takes your {captured_name} on {to_sq} with {san} — and gives check."
-                return f"The bot gives check with {san} — your king must get out of danger."
-            if is_capture:
-                return f"The bot takes your {captured_name} on {to_sq} ({san})."
-            if san in ["O-O", "O-O-O"]:
-                return f"The bot castles ({san}) and tucks its king away."
-            if piece_name == "pawn" and to_sq in ["d4", "e4", "d5", "e5"]:
-                return f"The bot pushes its pawn to {to_sq} ({san}), fighting for the center."
-            if piece_name in ["knight", "bishop"]:
-                return f"The bot develops its {piece_name} to {to_sq} ({san})."
-            return f"The bot moves ({san}) to improve its pieces."
+            if piece_name == "pawn":
+                if to_sq in [chess.D4, chess.E4, chess.D5, chess.E5]:
+                    lines.append(f"{actor} {verb('push')} the pawn to {to_sq_name} ({san}), staking a dominant claim in the core center.")
+                elif to_sq in [chess.C4, chess.F4, chess.C5, chess.F5]:
+                    lines.append(f"{actor} {verb('advance')} the pawn to {to_sq_name} ({san}), challenging central control from the flank.")
+                else:
+                    lines.append(f"{actor} {verb('advance')} the {piece_name} to {to_sq_name} ({san}), reinforcing the local pawn structure.")
+            elif piece_name in ["knight", "bishop"]:
+                from_rank = chess.square_rank(from_sq)
+                is_developing = (moving_color == chess.WHITE and from_rank == 0) or (moving_color == chess.BLACK and from_rank == 7)
+                if to_sq in [chess.A3, chess.H3, chess.A6, chess.H6]:
+                    lines.append(f"{actor} {verb('maneuver')} the {piece_name} to {to_sq_name} ({san}), developing flexibly to re-route toward central outposts.")
+                elif is_developing:
+                    lines.append(f"{actor} {verb('develop')} the {piece_name} to {to_sq_name} ({san}), activating a minor piece into the battle.")
+                else:
+                    lines.append(f"{actor} {verb('reposition')} the {piece_name} to {to_sq_name} ({san}), finding a more dynamic attacking post.")
+            elif piece_name == "rook":
+                file_idx = chess.square_file(to_sq)
+                has_friendly_pawns = any(p.piece_type == chess.PAWN and p.color == moving_color for sq, p in board_after.piece_map().items() if chess.square_file(sq) == file_idx)
+                has_enemy_pawns = any(p.piece_type == chess.PAWN and p.color == opp_color for sq, p in board_after.piece_map().items() if chess.square_file(sq) == file_idx)
+                if not has_friendly_pawns and not has_enemy_pawns:
+                    lines.append(f"{actor} {verb('slide')} the rook to {to_sq_name} ({san}), seizing complete control of the open {chr(97 + file_idx)}-file.")
+                elif not has_friendly_pawns:
+                    lines.append(f"{actor} {verb('place')} the rook on {to_sq_name} ({san}), ramping up vertical pressure along the semi-open {chr(97 + file_idx)}-file.")
+                else:
+                    lines.append(f"{actor} {verb('reposition')} the rook to {to_sq_name} ({san}), bolstering the defense of key files.")
+            elif piece_name == "queen":
+                lines.append(f"{actor} {verb('centralize')} the queen on {to_sq_name} ({san}), maximizing board reach across multiple diagonals.")
+            else:
+                lines.append(f"{actor} {verb('step')} the king to {to_sq_name} ({san}), improving king safety and consolidating squares.")
+
+        # Evaluates tactical interactions and board dynamics
+        board_events = []
+
+        threatened_enemies = []
+        for sq in board_after.attacks(to_sq):
+            p = board_after.piece_at(sq)
+            if p and p.color == opp_color and p.piece_type != chess.KING:
+                threatened_enemies.append((cls.PIECE_VALUES.get(p.piece_type, 0), cls.PIECE_NAMES.get(p.piece_type, "piece"), chess.square_name(sq)))
+
+        threatened_enemies.sort(reverse=True, key=lambda x: x[0])
+        if len(threatened_enemies) >= 2 and moving_piece and moving_piece.piece_type in [chess.KNIGHT, chess.PAWN, chess.BISHOP]:
+            p1, p2 = threatened_enemies[0], threatened_enemies[1]
+            board_events.append(f"This unleashes a dangerous fork, simultaneously attacking {opp_possessive} {p1[1]} on {p1[2]} and {p2[1]} on {p2[2]}.")
+        elif len(threatened_enemies) >= 1 and moving_piece and threatened_enemies[0][0] >= cls.PIECE_VALUES.get(moving_piece.piece_type, 0):
+            top_threat = threatened_enemies[0]
+            board_events.append(f"From {to_sq_name}, the {piece_name} exerts direct tactical pressure against the {top_threat[1]} on {top_threat[2]}.")
+
+        was_attacked = board_before.is_attacked_by(opp_color, from_sq)
+        if was_attacked and not is_capture:
+            board_events.append(f"This safely rescues the threatened {piece_name} from {from_sq_name} to a secure square.")
+
+        for sq in board_after.attacks(to_sq):
+            p = board_after.piece_at(sq)
+            if p and p.color == moving_color and sq != to_sq:
+                if board_before.is_attacked_by(opp_color, sq):
+                    p_name = cls.PIECE_NAMES.get(p.piece_type, "piece")
+                    board_events.append(f"It reinforces the defense of the targeted {p_name} on {chess.square_name(sq)}.")
+                    break
+
+        controlled_center = [chess.square_name(sq) for sq in board_after.attacks(to_sq) if sq in [chess.D4, chess.E4, chess.D5, chess.E5]]
+        if controlled_center and piece_name != "pawn" and not board_events:
+            board_events.append(f"The {piece_name} clamps down on key central transit squares ({', '.join(controlled_center)}), restricting enemy mobility.")
+
+        if not board_events:
+            for dir_piece_sq in board_before.piece_map():
+                p = board_before.piece_at(dir_piece_sq)
+                if p and p.color == moving_color and p.piece_type in [chess.BISHOP, chess.ROOK, chess.QUEEN] and dir_piece_sq != from_sq:
+                    attacks_before = board_before.attacks(dir_piece_sq)
+                    attacks_after = board_after.attacks(dir_piece_sq)
+                    newly_attacked = attacks_after - attacks_before
+                    for na_sq in newly_attacked:
+                        na_p = board_after.piece_at(na_sq)
+                        if na_p and na_p.color == opp_color and na_p.piece_type != chess.KING:
+                            board_events.append(f"Clearing {from_sq_name} unleashes a discovered attack from the {cls.PIECE_NAMES[p.piece_type]} on the {cls.PIECE_NAMES[na_p.piece_type]} on {chess.square_name(na_sq)}.")
+                            break
+                    if board_events:
+                        break
+
+        if board_events:
+            lines.append(board_events[0])
+        else:
+            if moving_piece and moving_piece.piece_type in [chess.KNIGHT, chess.BISHOP]:
+                lines.append("This coordinates piece activity and frees the back rank for streamlined piece flow.")
+            elif moving_piece and moving_piece.piece_type == chess.PAWN:
+                lines.append("This solidifies space control and denies convenient forward squares to opponent's minor pieces.")
+            else:
+                lines.append("This sustains active board pressure while maintaining rock-solid defensive integrity.")
+
+        # Evaluates strategic consequence and tempo
+        if is_check:
+            lines.append(f"{opp_str.capitalize()} is forced to spend a move reacting to the check rather than pursuing active plans.")
+        elif eval_data and eval_data.get("score_white") is not None:
+            user_sc = eval_data.get("user_score", 0)
+            if is_user and user_sc > 1.0:
+                lines.append("This builds commanding positional dominance and tilts the initiative heavily in your favor.")
+            elif is_user and user_sc < -1.0:
+                lines.append("This focuses on neutralizing enemy threats and restoring defensive stability.")
+            else:
+                lines.append("This keeps the struggle sharp and dynamic, setting up tactical opportunities on the very next ply.")
+        else:
+            lines.append("This preserves dynamic piece coordination and sets the foundation for future tactical strikes.")
+
+        return " ".join(lines)
 
     # Counts passed pawns for color
     @classmethod
