@@ -370,6 +370,14 @@ async def create_indexes():
     await db.live_states.create_index("game_id", unique=True)
     await db.matchmaking.create_index("user_id", unique=True)
 
+    await db.mistake_positions.create_index([("user_id", 1), ("cluster_id", 1)])
+    await db.mistake_positions.create_index([("user_id", 1), ("created_at", -1)])
+    await db.weakness_clusters.create_index([("user_id", 1), ("cluster_id", 1)], unique=True)
+    await db.srs_records.create_index([("user_id", 1), ("next_review_at", 1)])
+    await db.srs_records.create_index([("user_id", 1), ("cluster_id", 1), ("fen", 1)], unique=True)
+    await db.weakness_reports.create_index([("user_id", 1), ("cluster_id", 1), ("generated_at", -1)])
+    await db.drill_sessions.create_index([("user_id", 1), ("session_date", -1)])
+
 
 # Defines API request and response schemas
 # Represents user signup request payload
@@ -422,6 +430,8 @@ class CreateGameRequest(BaseModel):
     maia_elo: Optional[int] = Field(None, ge=800, le=2500)
     player_color: Optional[Literal["white", "black"]] = None
     training_mode: bool = False
+    initial_fen: Optional[str] = None
+    weakness_cluster_id: Optional[str] = None
     time_control_seconds: int = Field(600, ge=0, le=3600)
     increment_seconds: int = Field(0, ge=0, le=60)
     friend_username: Optional[str] = None
@@ -441,6 +451,8 @@ class GamePublic(BaseModel):
     maia_elo: Optional[int] = None
     player_color: Optional[str] = None
     training_mode: bool = False
+    initial_fen: Optional[str] = None
+    weakness_cluster_id: Optional[str] = None
     result: str
     started_at: datetime
     ended_at: Optional[datetime]
@@ -554,6 +566,8 @@ class GameDoc(BaseModel):
     maia_elo: Optional[int] = None
     player_color: Optional[Literal["white", "black"]] = None
     training_mode: bool = False
+    initial_fen: Optional[str] = None
+    weakness_cluster_id: Optional[str] = None
     result: GameResult = "ongoing"
     started_at: datetime = Field(default_factory=utcnow)
     ended_at: Optional[datetime] = None

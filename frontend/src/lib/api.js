@@ -239,6 +239,26 @@ export const broadcastsApi = {
   playerAvatarUrl: (fideId) => `${BASE_URL}/broadcasts/player-avatar/${encodeURIComponent(fideId)}`,
 };
 
+export const curriculumApi = {
+  getProfile: () => api.get('/api/curriculum/profile'),
+  getDrills: (clusterId = null) =>
+    api.get(`/api/curriculum/drills${clusterId ? `?cluster_id=${encodeURIComponent(clusterId)}` : ''}`),
+  submitDrill: (srsId, movePlayed, timeTakenSeconds, qualityScore = null) =>
+    api.post(`/api/curriculum/drills/${encodeURIComponent(srsId)}/submit`, {
+      move_played: movePlayed,
+      time_taken_seconds: timeTakenSeconds,
+      ...(qualityScore !== null && qualityScore !== undefined ? { quality_score: qualityScore } : {}),
+    }),
+  getReport: (clusterId) => api.get(`/api/curriculum/report/${encodeURIComponent(clusterId)}`),
+  getReports: () => api.get('/api/curriculum/reports'),
+  acknowledgeReport: (reportId) => api.post(`/api/curriculum/report/${encodeURIComponent(reportId)}/acknowledge`, {}),
+  getProgress: () => api.get('/api/curriculum/progress'),
+  getHistory: () => api.get('/api/curriculum/history'),
+  triggerCluster: (userId) => api.post(`/internal/curriculum/cluster/${encodeURIComponent(userId)}`, {}),
+  triggerAgent: (userId, clusterId) =>
+    api.post(`/internal/curriculum/agent/${encodeURIComponent(userId)}/${encodeURIComponent(clusterId)}`, {}),
+};
+
 const WS_BASE = (process.env.REACT_APP_WS_URL || 'ws://localhost:8000');
 
 export function createGameSocket(gameId, token) {

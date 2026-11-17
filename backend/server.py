@@ -20,6 +20,7 @@ from api import recover_interrupted_jobs, _ensure_gm_matcher_warm
 from realtime import handle_game_socket, handle_matchmaking_socket
 from engines import shutdown_maia
 from broadcasts import init_broadcast_worker, shutdown_broadcast_worker, close_broadcast_client
+from curriculum import curriculum_router, curriculum_internal_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -130,6 +131,8 @@ app.add_middleware(
 
 # Registers REST routers
 app.include_router(api_router)
+app.include_router(curriculum_router, prefix="/api/curriculum")
+app.include_router(curriculum_internal_router, prefix="/internal")
 
 
 # Exposes WebSocket endpoints

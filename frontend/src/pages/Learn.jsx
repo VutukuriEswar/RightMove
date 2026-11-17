@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import Board2D from '../components/board/Board2D';
 import GmChallenge from '../components/game/GmChallenge';
 import { learnApi } from '../lib/api';
+import { useCurriculum } from '../hooks/useCurriculum';
+import WeaknessCard from '../components/curriculum/WeaknessCard';
+import AgentReport from '../components/curriculum/AgentReport';
+import ImprovementChart from '../components/curriculum/ImprovementChart';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 26 },
@@ -33,6 +38,7 @@ const CLASS_COLORS = {
 };
 
 const TABS = [
+  { id: 'curriculum', label: '🎯 My Weaknesses', icon: '🎯' },
   { id: 'basics', label: '♟ Basics', icon: '♟' },
   { id: 'notation', label: '🗺 Squares', icon: '🗺' },
   { id: 'pgn', label: '📂 PGN Lab', icon: '📂' },
@@ -161,7 +167,32 @@ function ParamRow({ p }) {
 }
 
 export default function Learn() {
-  const [tab, setTab] = useState('basics');
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [tab, setTab] = useState(searchParams.get('tab') || 'curriculum');
+  const [expandedBannerReport, setExpandedBannerReport] = useState(false);
+
+  const {
+    clusters,
+    pendingDrills,
+    unreadReports,
+    progressData,
+    fetchProgress,
+    acknowledgeReport,
+  } = useCurriculum();
+
+  useEffect(() => {
+    fetchProgress();
+    const tabParam = searchParams.get('tab');
+    if (tabParam) {
+      setTab(tabParam);
+      document.getElementById(`learn-${tabParam}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [searchParams, fetchProgress]);
+
+  const unreadCluster = clusters.find((c) => c.latest_report && !c.latest_report.acknowledged_by_user);
+  const unreadReport = unreadCluster?.latest_report || null;
+
   const [moveSel, setMoveSel] = useState(MOVE_GROUPS[0].moves[0]);
   const [pgnFile, setPgnFile] = useState(null);
   const [pgnBusy, setPgnBusy] = useState(false);
@@ -237,6 +268,131 @@ export default function Learn() {
           </button>
         ))}
       </div>
+
+      <motion.section id="learn-curriculum" className="glass-panel learn-section" variants={fadeUp} initial="hidden" whileInView="visible" viewport={{ once: true, margin: '-60px' }}>
+        <div className="learn-section-head">
+          <span className="learn-kicker">Curriculum Engine</span>
+          <h2>🎯 Personalized Weakness Training</h2>
+          <p>
+            An adaptive AI coach clustering your in-game mistakes, scheduling tailored spaced-repetition
+            drills, and guiding your deliberate practice.
+          </p>
+        </div>
+
+        {unreadReport && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{
+              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(15, 23, 42, 0.9))',
+              border: '1px solid rgba(56, 189, 248, 0.4)',
+              borderRadius: 14,
+              padding: '18px 22px',
+              marginBottom: 24,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              boxShadow: '0 8px 24px rgba(56, 189, 248, 0.15)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: '1.4rem' }}>🔔</span>
+                <div>
+                  <div style={{ fontWeight: 700, color: '#38bdf8', fontSize: '0.95rem' }}>
+                    New Coach Insight: {unreadCluster?.display_name || 'Weakness Analysis'}
+                  </div>
+                  <div style={{ color: '#e2e8f0', fontSize: '0.9rem', marginTop: 2 }}>
+                    &ldquo;{unreadReport.pattern_name}&rdquo;
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary interactive"
+                onClick={() => setExpandedBannerReport((v) => !v)}
+                style={{ padding: '6px 14px', fontSize: '0.85rem' }}
+              >
+                {expandedBannerReport ? 'Collapse Report ↑' : 'Read Full Report ↓'}
+              </button>
+            </div>
+
+            <AnimatePresence>
+              {expandedBannerReport && (
+                <AgentReport
+                  report={unreadReport}
+                  cluster={unreadCluster}
+                  onDismiss={() => {
+                    acknowledgeReport(unreadReport._id, unreadCluster?.cluster_id);
+                    setExpandedBannerReport(false);
+                  }}
+                  onDrillNow={() => navigate(`/learn/drill?cluster=${encodeURIComponent(unreadCluster.cluster_id)}`)}
+                />
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h3 style={{ margin: 0, color: '#f8fafc', fontSize: '1.15rem', fontWeight: 700 }}>
+              Active Weakness Profiles
+            </h3>
+            {pendingDrills > 0 && (
+              <button
+                type="button"
+                className="btn-neon interactive"
+                onClick={() => navigate('/learn/drill')}
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              >
+                ⚡ Drill Due Positions ({pendingDrills})
+              </button>
+            )}
+          </div>
+
+          {clusters && clusters.length > 0 ? (
+            <div>
+              {clusters.map((c) => (
+                <WeaknessCard key={c.cluster_id} cluster={c} />
+              ))}
+            </div>
+          ) : (
+            <div
+              style={{
+                padding: '36px 24px',
+                textAlign: 'center',
+                background: 'rgba(15, 23, 42, 0.4)',
+                borderRadius: 16,
+                border: '1px dashed rgba(255, 255, 255, 0.12)',
+              }}
+            >
+              <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: 10 }}>♟️</span>
+              <h4 style={{ color: '#fff', fontSize: '1.1rem', margin: '0 0 6px 0' }}>
+                No weaknesses logged yet
+              </h4>
+              <p style={{ color: '#94a3b8', fontSize: '0.9rem', maxWidth: 440, margin: '0 auto 16px auto', lineHeight: 1.5 }}>
+                Play games against bots or friends. When 15+ tactical mistakes accumulate, our AI
+                engine automatically groups them into recurring patterns with custom drills here.
+              </p>
+              <button
+                type="button"
+                className="btn-neon interactive"
+                onClick={() => navigate('/lobby')}
+                style={{ padding: '8px 18px' }}
+              >
+                Play a Game →
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h3 style={{ margin: '0 0 14px 0', color: '#f8fafc', fontSize: '1.15rem', fontWeight: 700 }}>
+            Progress Over Time
+          </h3>
+          <ImprovementChart clusters={progressData?.clusters || clusters} />
+        </div>
+      </motion.section>
 
       <motion.section id="learn-basics" className="glass-panel learn-section" variants={fadeUp} initial="hidden" whileInView="visible" viewport={{ once: true, margin: '-60px' }}>
         <div className="learn-section-head">

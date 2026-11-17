@@ -9,6 +9,7 @@ import { resignActiveGame, hasActiveGameResigner } from '../../lib/activeGameRes
 import { useNotifCounts } from '../../hooks/useNotifCounts';
 import { useTrainingBadge } from '../../hooks/useTrainingBadge';
 import { useThemeStore } from '../../store/themeStore';
+import { useCurriculumStore } from '../../store/curriculumStore';
 
 export function NavBar() {
   const { user, isLoggedIn } = useAuth();
@@ -25,6 +26,9 @@ export function NavBar() {
   const { friend_requests, challenge_requests } = useNotifCounts();
   const friendTotal = (friend_requests || 0) + (challenge_requests || 0);
   const trainingNew = useTrainingBadge(user?.role === 'admin');
+  const pendingDrills = useCurriculumStore((s) => s.pendingDrills);
+  const unreadReports = useCurriculumStore((s) => s.unreadReports);
+  const curriculumTotal = (pendingDrills || 0) + (unreadReports || 0);
 
   const inLiveGame = location.pathname.startsWith('/game/');
 
@@ -124,6 +128,11 @@ export function NavBar() {
               onClick={() => setMenuOpen(false)}
             >
               Learn
+              {isLoggedIn && curriculumTotal > 0 && (
+                <span className="nav-badge">
+                  {curriculumTotal > 99 ? '99+' : curriculumTotal}
+                </span>
+              )}
             </Link>
           </li>
           <li>

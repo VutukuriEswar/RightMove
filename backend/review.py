@@ -929,3 +929,12 @@ class GameAnalyzer:
             ply += 1
 
         return results
+
+
+# Ingests analyzed game mistakes into curriculum engine
+async def post_analysis_hook(user_id: str, game_id: str, mistakes: list, player_color: str = "white") -> int:
+    try:
+        from curriculum.triggers import post_analysis_hook as _hook
+        return await _hook(user_id, game_id, mistakes, player_color)
+    except Exception:
+        return 0

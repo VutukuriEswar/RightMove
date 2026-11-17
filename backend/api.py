@@ -317,6 +317,8 @@ async def create_game(body: CreateGameRequest, current_user: dict = Depends(get_
         maia_elo=maia_elo,
         player_color=player_color if body.mode == "bot" else None,
         training_mode=body.training_mode,
+        initial_fen=body.initial_fen,
+        weakness_cluster_id=body.weakness_cluster_id,
         time_control_seconds=body.time_control_seconds,
         increment_seconds=body.increment_seconds,
     )
@@ -844,6 +846,13 @@ async def submit_game_summary(
         upsert=True,
     )
 
+    try:
+        from review import post_analysis_hook
+        p_color = game.get("player_color") or ("white" if str(game.get("white_id")) == str(current_user["_id"]) else "black")
+        await post_analysis_hook(str(current_user["_id"]), game_id, moves_data, player_color=p_color)
+    except Exception:
+        pass
+
     return {"status": "ok", "game_id": game_id}
 
 # Converts game dict to public schema
@@ -861,6 +870,8 @@ def _game_to_public(game: dict, white_username: str = None, black_username: str 
         maia_elo=game.get("maia_elo"),
         player_color=game.get("player_color"),
         training_mode=game.get("training_mode", False),
+        initial_fen=game.get("initial_fen"),
+        weakness_cluster_id=game.get("weakness_cluster_id"),
         result=game["result"],
         started_at=_as_utc(game["started_at"]),
         ended_at=_as_utc(game.get("ended_at")),
@@ -1851,6 +1862,7 @@ class MoveExplainRequest(BaseModel):
     best_move_uci: Optional[str] = None
     cp_loss: float = 0.0
     classification: Optional[dict] = None
+    user_id: Optional[str] = None
 
 # Defines position request schema
 class PositionRequest(BaseModel):
@@ -1932,6 +1944,7 @@ async def explain_move(req: MoveExplainRequest):
                 cp_loss=req.cp_loss,
                 advantages=_thing1.get("strengths") or ([_thing1.get("summary")] if _thing1.get("summary") else []),
                 disadvantages=_thing2.get("defects") or ([_thing2.get("summary")] if _thing2.get("summary") else []),
+                user_id=req.user_id,
             )
         except Exception as e:
             logger.info(f"[coach] narrative skipped: {e}")
@@ -2280,7 +2293,31 @@ async def gm_challenge(model_id: Optional[str] = None,
         await _aget_gm_model(doc.get("model_id"), is_admin=_is_admin_user(current_user))
     except Exception:
         pass
-    pick = random.choice(positions)
+
+    pick = None
+    curriculum_label = None
+    try:
+        user_id = str(current_user.get("_id", ""))
+        clusters = await db.weakness_clusters.find({"user_id": user_id, "is_active": True}).to_list(5)
+        if clusters:
+            from curriculum.features import extract_features, cosine_similarity
+            for pos in random.sample(positions, min(len(positions), 15)):
+                b = chess.Board(pos["fen"])
+                pos_feat = extract_features(b)
+                for cl in clusters:
+                    centroid = cl.get("centroid_raw")
+                    if centroid and cosine_similarity(pos_feat, centroid) > 0.8:
+                        pick = pos
+                        curriculum_label = f"This GM game features a position similar to your {cl.get('display_name', 'weakness')} weakness"
+                        break
+                if pick:
+                    break
+    except Exception:
+        pass
+
+    if not pick:
+        pick = random.choice(positions)
+
     try:
         legal = [m.uci() for m in chess.Board(pick["fen"]).legal_moves]
     except Exception:
@@ -2294,6 +2331,7 @@ async def gm_challenge(model_id: Optional[str] = None,
                  "result": pick["result"], "event": pick["event"]},
         "model_id": doc.get("model_id"),
         "model_name": doc.get("name"),
+        "curriculum_label": curriculum_label,
     }
 
 # Defines GM challenge scoring request schema

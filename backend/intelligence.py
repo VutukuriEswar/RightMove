@@ -136,7 +136,7 @@ def _remember(key: str, value: dict) -> dict:
 def build_prompt(fen: str, player_move_san: str, best_move_san: str,
                  classification: str, cp_loss: float, eval_cp: Optional[float],
                  advantages: list[str], disadvantages: list[str],
-                 top_moves: list[dict]) -> tuple[str, str]:
+                 top_moves: list[dict], weakness_context: Optional[str] = None) -> tuple[str, str]:
     top_lines = "\n".join(
         f"- {t.get('move_san')} (eval {t.get('eval_cp', t.get('score_white', '?'))})"
         for t in (top_moves or [])[:3]
@@ -158,6 +158,8 @@ def build_prompt(fen: str, player_move_san: str, best_move_san: str,
         "WHY: 2 bullets — what it does, what it gives up.\n"
         "BETTER PLAN: move to play instead + the simple idea."
     )
+    if weakness_context:
+        user = f"{weakness_context}\n\n{user}"
     return system, user
 
 _LOCAL_PIPE = {"model_id": None, "pipe": None}
@@ -355,14 +357,36 @@ async def explain_move_rich(fen: str, player_move_san: str, best_move_san: str,
                             eval_cp: Optional[float] = None,
                             advantages: Optional[list[str]] = None,
                             disadvantages: Optional[list[str]] = None,
-                            top_moves: Optional[list[dict]] = None) -> dict:
+                            top_moves: Optional[list[dict]] = None,
+                            user_id: Optional[str] = None,
+                            weakness_context: Optional[str] = None) -> dict:
     advantages = advantages or []
     disadvantages = disadvantages or []
-    key = _cache_key("move", fen, player_move_san, best_move_san, classification, str(cp_loss))
+    if user_id and not weakness_context:
+        try:
+            from core import get_db
+            from curriculum.features import extract_features, cosine_similarity
+            db = get_db()
+            active_clusters = await db.weakness_clusters.find({"user_id": user_id, "is_active": True}).to_list(5)
+            if active_clusters:
+                b = chess.Board(fen)
+                cur_feats = extract_features(b)
+                for cl in active_clusters:
+                    c_raw = cl.get("centroid_raw")
+                    if c_raw and cosine_similarity(cur_feats, c_raw) > 0.85:
+                        rep = await db.weakness_reports.find_one({"user_id": user_id, "cluster_id": cl["cluster_id"], "is_active": True}, sort=[("generated_at", -1)])
+                        signals = rep.get("signals", []) if rep else []
+                        top_signal = signals[0] if signals else "Ensure active piece placement"
+                        weakness_context = f"Note: this player has a known weakness in {cl.get('display_name')}. Key questions they should ask: {top_signal}"
+                        break
+        except Exception:
+            pass
+
+    key = _cache_key("move", fen, player_move_san, best_move_san, classification, str(cp_loss), str(weakness_context or ""))
     if key in _CACHE:
         return _CACHE[key]
     system, user = build_prompt(fen, player_move_san, best_move_san, classification,
-                                cp_loss, eval_cp, advantages, disadvantages, top_moves or [])
+                                cp_loss, eval_cp, advantages, disadvantages, top_moves or [], weakness_context)
     rule_fallback = _rule_based_text(player_move_san, best_move_san, classification,
                                        cp_loss, advantages, disadvantages)
     if not _hf_enabled():

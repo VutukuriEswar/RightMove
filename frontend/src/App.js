@@ -21,6 +21,7 @@ import Profile from './pages/Profile';
 import MatchHistory from './pages/MatchHistory';
 import SharedReview from './pages/SharedReview';
 import Learn from './pages/Learn';
+import DrillSessionPage from './pages/DrillSessionPage';
 import Events from './pages/Events';
 import AdminUsers from './pages/AdminUsers';
 import AdminTraining from './pages/AdminTraining';
@@ -65,6 +66,7 @@ const router = createBrowserRouter([
       { path: '/profile', element: <RequireAuth><Profile /></RequireAuth> },
       { path: '/history', element: <RequireAuth><MatchHistory /></RequireAuth> },
       { path: '/learn', element: <RequireAuth><Learn /></RequireAuth> },
+      { path: '/learn/drill', element: <RequireAuth><DrillSessionPage /></RequireAuth> },
       { path: '/events', element: <Events /> },
       { path: '/events/:tourId', element: <Events /> },
       { path: '/events/:tourId/:roundSlug', element: <Events /> },
