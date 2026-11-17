@@ -17,7 +17,7 @@ from engines import classify_move
 from engines import EngineType, get_pool
 from fastapi import WebSocket, Query, WebSocketDisconnect
 from core import GameDoc
-from intelligence import enqueue, dequeue, check_for_match, set_matched
+from intelligence import enqueue, dequeue, check_for_match, set_matched, wait_for_match_event
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ logger = logging.getLogger(__name__)
 
 
 # Handles live game socket interactions
-_game_states: dict[str, dict] = {}
+_game_states: dict[str, "GameState"] = {}
 
 
 _clock_tasks: dict[str, asyncio.Task] = {}
@@ -225,6 +225,56 @@ def _set_state(game_id: str, state: GameState):
     _game_states[game_id] = state
 
 
+# Serializes live state dict for MongoDB persistence
+def _state_to_doc(state: GameState) -> dict:
+    return {
+        "game_id": state.game_id,
+        "fen": state.board.fen(),
+        "moves": state.moves,
+        "clocks": dict(state.clocks),
+        "result": state.result,
+        "clock_running": state.clock_running,
+        "last_eval_cp": state.last_eval_cp,
+    }
+
+
+# Persists live game state to MongoDB live_states collection
+async def _persist_live_state(state: GameState):
+    try:
+        db = get_db()
+        await db.live_states.replace_one(
+            {"game_id": state.game_id},
+            _state_to_doc(state),
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f"[live_state] Failed to persist state for {state.game_id}: {e}")
+
+
+# Restores in-memory state from MongoDB if not in cache
+async def _restore_live_state(game_id: str, game_doc: dict) -> Optional[GameState]:
+    if game_id in _game_states:
+        return _game_states[game_id]
+    db = get_db()
+    doc = await db.live_states.find_one({"game_id": game_id})
+    if not doc:
+        return None
+    try:
+        state = GameState(game_doc)
+        state.board = chess.Board(doc["fen"])
+        state.moves = doc.get("moves") or []
+        state.clocks = doc.get("clocks") or state.clocks
+        state.result = doc.get("result")
+        state.clock_running = False
+        state.last_eval_cp = doc.get("last_eval_cp", 0)
+        _set_state(game_id, state)
+        logger.info(f"[live_state] Restored state for game {game_id} from MongoDB")
+        return state
+    except Exception as e:
+        logger.warning(f"[live_state] Failed to restore state for {game_id}: {e}")
+        return None
+
+
 # Rebuilds live state from paused snapshot
 async def restore_paused_state(game_id: str) -> Optional[GameState]:
     from bson import ObjectId
@@ -329,8 +379,12 @@ async def handle_game_socket(
 
 
     if game_id not in _game_states:
-        state = GameState(game_doc)
-        _set_state(game_id, state)
+        restored = await _restore_live_state(game_id, game_doc)
+        if restored is None:
+            state = GameState(game_doc)
+            _set_state(game_id, state)
+        else:
+            state = restored
     else:
         state = _get_state(game_id)
 
@@ -557,6 +611,7 @@ async def _handle_move(
 
     state.redo_stack = []
 
+    asyncio.create_task(_persist_live_state(state))
 
     if state.training_mode and len(state.moves) > 2:
         asyncio.create_task(_send_human_feedback(game_id, state, uci_str, is_white_turn, state.board.is_capture(move)))
@@ -740,6 +795,8 @@ async def _bot_reply(game_id: str, state: GameState):
     state.last_move_time = time.time()
     state.clock_running = True
 
+    asyncio.create_task(_persist_live_state(state))
+
     await manager.broadcast(game_id, {
         "type": "move",
         "payload": move_record,
@@ -855,6 +912,11 @@ async def _end_game(game_id: str, state: GameState, result: str):
     except Exception:
         pass
 
+    try:
+        await db.live_states.delete_one({"game_id": game_id})
+    except Exception:
+        pass
+
     await manager.broadcast(game_id, {
         "type": "game_over",
         "payload": {
@@ -957,19 +1019,29 @@ async def handle_matchmaking_socket(
                     })
                     break
 
-
-            await asyncio.sleep(1.0)
-
-
-            try:
-                raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
-                msg = json.loads(raw)
-                if msg.get("type") == "cancel":
-                    await dequeue(user_id)
-                    await websocket.send_json({"type": "cancelled", "payload": {}})
-                    return
-            except asyncio.TimeoutError:
-                pass
+            check_cancel = asyncio.create_task(
+                asyncio.wait_for(websocket.receive_text(), timeout=0.05)
+            )
+            wait_event = asyncio.create_task(wait_for_match_event(timeout=10.0))
+            done, pending = await asyncio.wait(
+                {check_cancel, wait_event},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+            for t in done:
+                try:
+                    raw = t.result()
+                    if isinstance(raw, str):
+                        msg = json.loads(raw)
+                        if msg.get("type") == "cancel":
+                            await dequeue(user_id)
+                            await websocket.send_json({"type": "cancelled", "payload": {}})
+                            return
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+                except Exception:
+                    pass
 
     except WebSocketDisconnect:
         await dequeue(user_id)

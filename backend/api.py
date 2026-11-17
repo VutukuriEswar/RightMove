@@ -206,12 +206,13 @@ async def update_me(
     updated = await db.users.find_one({"_id": current_user["_id"]})
     return _to_public(updated)
 
-# Accepts avatar upload and stores data URL
+# Accepts avatar upload and stores it in GridFS
 @auth_router.post("/me/avatar", response_model=UserPublic)
 async def upload_avatar(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
+    from core import avatar_put
     db = get_db()
 
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -221,16 +222,29 @@ async def upload_avatar(
     if len(data) > 2 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Image must be under 2 MB")
 
-    ext = file.content_type.split("/")[1].split("+")[0]
-    data_url = f"data:{file.content_type};base64,{base64.b64encode(data).decode()}"
+    user_id = str(current_user["_id"])
+    grid_id = await avatar_put(user_id, file.content_type, data)
+    avatar_url = f"/auth/me/avatar/{grid_id}"
 
     await db.users.update_one(
         {"_id": current_user["_id"]},
-        {"$set": {"avatar_url": data_url}},
+        {"$set": {"avatar_url": avatar_url}},
     )
 
     updated = await db.users.find_one({"_id": current_user["_id"]})
     return _to_public(updated)
+
+
+# Serves avatar image bytes from GridFS
+@auth_router.get("/me/avatar/{grid_id}")
+async def get_avatar(grid_id: str):
+    from core import avatar_get
+    from fastapi.responses import Response
+    try:
+        data, content_type = await avatar_get(grid_id)
+        return Response(content=data, media_type=content_type)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Avatar not found")
 
 # Normalizes Mongo datetime to UTC-aware for serialization
 def _as_utc(value):
@@ -3221,6 +3235,32 @@ async def _run_training(job_id: str, cfg: dict, created_by: str,
         job.update({"status": "failed", "error": f"{type(e).__name__}: {e}"})
         await _persist_job(job)
 
+# Migrates existing base64 avatar_url fields to GridFS
+async def _migrate_base64_avatars_to_gridfs(summary: dict):
+    from core import avatar_put
+    db = get_db()
+    try:
+        cursor = db.users.find({"avatar_url": {"$regex": "^data:image/"}})
+        async for user in cursor:
+            user_id = str(user["_id"])
+            avatar_url = user.get("avatar_url", "")
+            try:
+                header, encoded = avatar_url.split(",", 1)
+                content_type = header.split(":")[1].split(";")[0]
+                data = base64.b64decode(encoded)
+                grid_id = await avatar_put(user_id, content_type, data)
+                new_url = f"/auth/me/avatar/{grid_id}"
+                await db.users.update_one(
+                    {"_id": user["_id"]},
+                    {"$set": {"avatar_url": new_url}},
+                )
+                summary.setdefault("avatars_migrated", []).append(user_id)
+            except Exception as e:
+                summary.setdefault("avatar_errors", []).append(f"{user_id}: {e}")
+    except Exception as e:
+        summary.setdefault("avatar_errors", []).append(f"cursor failed: {e}")
+
+
 # Migrates disk uploads into GridFS
 async def migrate_uploads_to_gridfs() -> dict:
     summary = {"migrated": [], "skipped_orphans": [], "errors": []}
@@ -3294,6 +3334,7 @@ async def migrate_uploads_to_gridfs() -> dict:
             UPLOAD_DIR.rmdir()
     except Exception:
         pass
+    await _migrate_base64_avatars_to_gridfs(summary)
     return summary
 
 # Migrates disk uploads when space frees

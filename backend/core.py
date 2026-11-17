@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     sf_path: str = "./engines/Stockfish/src/stockfish.exe"
     maia3_dir: str = "./engines/Maia-3/maia3"
+    maia_pool_size: int = 2
 
 
     frontend_url: str = "http://localhost:5173"
@@ -40,11 +41,16 @@ class Settings(BaseSettings):
     admin_username: str = "EswarVutukuri"
     admin_display_name: str = "Eswar Vutukuri"
     admin_email: str = "vutukurieswar@gmail.com"
-    admin_password: str = "123456789"
+    admin_password: str = "CHANGE_ME_IN_PRODUCTION"
+
+
+    rate_limit_auth: str = "10/minute"
+    rate_limit_api: str = "120/minute"
 
 
     hf_explanations_enabled: bool = True
     hf_local_model_id: str = "Qwen/Qwen2.5-1.5B-Instruct"
+
 
     # Configures live broadcast and Stockfish analysis options
     lichess_token: str = ""
@@ -61,6 +67,27 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+# Validates that insecure defaults are not used in production
+def validate_security_settings():
+    import os
+    s = get_settings()
+    insecure_secrets = {"change-me", "changeme", "secret", ""}
+    insecure_passwords = {"123456789", "password", "admin", "CHANGE_ME_IN_PRODUCTION", "change-me-in-production", ""}
+    env = os.environ.get("APP_ENV", "development").lower()
+    if env == "production":
+        if s.secret_key.lower() in insecure_secrets:
+            raise RuntimeError("[security] SECRET_KEY must be changed from the default before running in production.")
+        if s.admin_password in insecure_passwords:
+            raise RuntimeError("[security] ADMIN_PASSWORD must be changed from the default before running in production.")
+    else:
+        import logging as _lg
+        _sec_logger = _lg.getLogger(__name__)
+        if s.secret_key.lower() in insecure_secrets:
+            _sec_logger.warning("[security] SECRET_KEY is using an insecure default — set it via .env before deploying.")
+        if s.admin_password in insecure_passwords:
+            _sec_logger.warning("[security] ADMIN_PASSWORD is using an insecure default — set it via .env before deploying.")
 
 
 # Provides password and JWT helpers
@@ -107,7 +134,10 @@ _client: AsyncIOMotorClient | None = None
 def get_client() -> AsyncIOMotorClient:
     global _client
     if _client is None:
-        _client = AsyncIOMotorClient(settings.mongodb_url)
+        _client = AsyncIOMotorClient(
+            settings.mongodb_url,
+            serverSelectionTimeoutMS=5000,
+        )
     return _client
 
 
@@ -125,6 +155,7 @@ async def close_db():
 
 
 PGN_BUCKET = "training_pgns"
+AVATAR_BUCKET = "avatars"
 
 
 import logging as _logging
@@ -159,6 +190,12 @@ def get_pgn_bucket():
     return AsyncIOMotorGridFSBucket(get_db(), bucket_name=PGN_BUCKET)
 
 
+# Returns GridFS avatar bucket
+def get_avatar_bucket():
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    return AsyncIOMotorGridFSBucket(get_db(), bucket_name=AVATAR_BUCKET)
+
+
 # Stores PGN bytes in GridFS
 async def pgn_put(filename: str, data: bytes) -> str:
     bucket = get_pgn_bucket()
@@ -184,6 +221,39 @@ async def pgn_delete(grid_id: str) -> bool:
         return True
     except Exception:
         return False
+
+
+# Stores avatar bytes in GridFS and returns grid ID string
+async def avatar_put(user_id: str, content_type: str, data: bytes) -> str:
+    import io as _io
+    from bson import ObjectId
+    bucket = get_avatar_bucket()
+    existing = await bucket.find({"metadata.user_id": user_id}).to_list(10)
+    for doc in existing:
+        try:
+            await bucket.delete(doc["_id"])
+        except Exception:
+            pass
+    grid_id = await bucket.upload_from_stream(
+        f"avatar_{user_id}",
+        _io.BytesIO(data),
+        metadata={"user_id": user_id, "content_type": content_type},
+    )
+    return str(grid_id)
+
+
+# Downloads avatar bytes and content-type from GridFS
+async def avatar_get(grid_id: str) -> tuple[bytes, str]:
+    import io as _io
+    from bson import ObjectId
+    bucket = get_avatar_bucket()
+    buf = _io.BytesIO()
+    await bucket.download_to_stream(ObjectId(grid_id), buf)
+    info = await bucket.find({"_id": ObjectId(grid_id)}).to_list(1)
+    content_type = "image/jpeg"
+    if info and info[0].get("metadata", {}).get("content_type"):
+        content_type = info[0]["metadata"]["content_type"]
+    return buf.getvalue(), content_type
 
 
 # Opens PGN text stream from source
@@ -296,6 +366,9 @@ async def create_indexes():
     await db.broadcast_round_scans.create_index("round_id", unique=True)
     await db.broadcast_event_analysis_state.create_index("tour_id", unique=True)
     await db.broadcast_player_avatars.create_index("fide_id", unique=True)
+
+    await db.live_states.create_index("game_id", unique=True)
+    await db.matchmaking.create_index("user_id", unique=True)
 
 
 # Defines API request and response schemas

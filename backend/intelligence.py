@@ -1,7 +1,8 @@
 # Provides matchmaking, analysis and coaching intelligence services.
 import time
 import logging
-from typing import Optional
+import asyncio
+from typing import Optional, Dict, Any, List
 from core import get_db
 import hashlib
 import re
@@ -12,13 +13,21 @@ import io
 import chess.pgn
 from pathlib import Path
 from gm import SAMPLE_GM_PGNS
-from typing import Dict, Any, List
 
 # Section services/matchmaking_service
 logger = logging.getLogger(__name__)
 
+_matchmaking_event: asyncio.Event | None = None
 
-# Enqueues player into matchmaking queue
+
+def _get_matchmaking_event() -> asyncio.Event:
+    global _matchmaking_event
+    if _matchmaking_event is None:
+        _matchmaking_event = asyncio.Event()
+    return _matchmaking_event
+
+
+# Enqueues player into matchmaking queue and signals waiters
 async def enqueue(user_id: str, time_control_seconds: int = 600, increment_seconds: int = 0):
     db = get_db()
     await db.matchmaking.update_one(
@@ -32,6 +41,7 @@ async def enqueue(user_id: str, time_control_seconds: int = 600, increment_secon
         }},
         upsert=True
     )
+    _get_matchmaking_event().set()
     logger.info(f"[matchmaking] {user_id} joined queue (tc={time_control_seconds}+{increment_seconds})")
 
 # Removes player from matchmaking queue
@@ -70,7 +80,7 @@ async def check_for_match(user_id: str) -> Optional[dict]:
 
     return None
 
-# Marks opponent queue entry as matched
+# Marks opponent queue entry as matched and signals waiters
 async def set_matched(opponent_id: str, game_id: str, my_user_id: str):
     db = get_db()
     await db.matchmaking.update_one(
@@ -80,6 +90,16 @@ async def set_matched(opponent_id: str, game_id: str, my_user_id: str):
             "opponent_id": my_user_id
         }}
     )
+    _get_matchmaking_event().set()
+
+# Waits for a matchmaking event or timeout, then resets the shared flag
+async def wait_for_match_event(timeout: float = 5.0):
+    event = _get_matchmaking_event()
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    event.clear()
 
 # Section services/summary_service
 

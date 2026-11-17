@@ -385,58 +385,106 @@ def _maia_env():
     return env
 
 
-# Returns Maia move at Elo level
-async def get_maia_move(fen: str, elo: int = 1500, model: str = "maia3-5m") -> str:
-    global _maia_instance, _maia_elo
+# Manages a pool of Maia-3 UCI engine processes at a fixed Elo
+class MaiaPool:
+    # Initializes pool state for given Elo target
+    def __init__(self, elo: int, size: int = 2, model: str = "maia3-5m"):
+        self.elo = elo
+        self.size = size
+        self.model = model
+        self._pool: list[chess.engine.SimpleEngine] = []
+        self._lock = asyncio.Lock()
+        self._semaphore = asyncio.Semaphore(size)
 
-    async with _maia_lock:
-        if _maia_instance is None or _maia_elo != elo:
-            if _maia_instance is not None:
+    # Spawns a fresh Maia-3 process for the pool
+    async def _spawn(self) -> chess.engine.SimpleEngine:
+        cmd = [sys.executable, "-m", "maia3.uci", "--model", self.model, "--elo", str(self.elo)]
+        engine = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: chess.engine.SimpleEngine.popen_uci(cmd, env=_maia_env()),
+        )
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: engine.play(chess.Board(), chess.engine.Limit(nodes=1)),
+        )
+        logger.info(f"[maia_pool] Spawned Maia-3 elo={self.elo}")
+        return engine
+
+    # Acquires a Maia-3 engine from the pool
+    async def acquire(self) -> chess.engine.SimpleEngine:
+        await self._semaphore.acquire()
+        try:
+            async with self._lock:
+                if self._pool:
+                    return self._pool.pop()
+                return await self._spawn()
+        except Exception:
+            self._semaphore.release()
+            raise
+
+    # Returns a Maia-3 engine back to the pool
+    async def release(self, engine: chess.engine.SimpleEngine):
+        async with self._lock:
+            if len(self._pool) < self.size:
+                self._pool.append(engine)
+            else:
                 try:
-                    _maia_instance.quit()
+                    engine.quit()
                 except Exception:
                     pass
-                _maia_instance = None
+        self._semaphore.release()
 
-            try:
-                cmd = [sys.executable, "-m", "maia3.uci", "--model", model, "--elo", str(elo)]
-                _maia_instance = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: chess.engine.SimpleEngine.popen_uci(cmd, env=_maia_env()),
-                )
-                _maia_elo = elo
-                logger.info(f"[maia] Spawned Maia-3 (elo={elo}), warming up...")
-                
-                # Warmup call so first move lag is eliminated
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: _maia_instance.play(chess.Board(), chess.engine.Limit(nodes=1)),
-                )
-                logger.info(f"[maia] Warmup complete.")
-            except Exception as e:
-                logger.error(f"[maia] Failed to spawn/warmup Maia-3: {e}")
-                _maia_instance = None
-                raise
+    # Shuts down all pooled Maia-3 engines
+    async def shutdown(self):
+        async with self._lock:
+            for engine in self._pool:
+                try:
+                    engine.quit()
+                except Exception:
+                    pass
+            self._pool.clear()
 
 
-    board = chess.Board(fen)
-    result = await asyncio.get_event_loop().run_in_executor(
-        None,
-        lambda: _maia_instance.play(board, chess.engine.Limit(nodes=1)),
-    )
-    return result.move.uci()
+_maia_pools: dict[int, MaiaPool] = {}
+_maia_pools_lock = asyncio.Lock()
 
 
-# Shuts down cached Maia instance
-async def shutdown_maia():
-    global _maia_instance
-    if _maia_instance is not None:
+# Returns or creates a MaiaPool for the given Elo target
+async def _get_maia_pool(elo: int) -> MaiaPool:
+    async with _maia_pools_lock:
+        if elo not in _maia_pools:
+            _maia_pools[elo] = MaiaPool(elo, size=settings.maia_pool_size)
+        return _maia_pools[elo]
+
+
+# Returns Maia move at Elo level using pool
+async def get_maia_move(fen: str, elo: int = 1500, model: str = "maia3-5m") -> str:
+    pool = await _get_maia_pool(elo)
+    engine = await pool.acquire()
+    try:
+        board = chess.Board(fen)
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: engine.play(board, chess.engine.Limit(nodes=1)),
+        )
+        return result.move.uci()
+    except Exception:
         try:
-            await asyncio.get_event_loop().run_in_executor(None, _maia_instance.quit)
+            engine.quit()
         except Exception:
             pass
-        _maia_instance = None
-        logger.info("[maia] Maia-3 engine shut down.")
+        raise
+    finally:
+        await pool.release(engine)
+
+
+# Shuts down all cached Maia pools
+async def shutdown_maia():
+    async with _maia_pools_lock:
+        for pool in _maia_pools.values():
+            await pool.shutdown()
+        _maia_pools.clear()
+        logger.info("[maia_pool] All Maia-3 pools shut down.")
 
 
 logger = logging.getLogger(__name__)
