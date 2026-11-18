@@ -16,7 +16,13 @@ def compute_health(cluster_id: str, srs_records: list, game_mistakes: list) -> f
     for rec in srs_records:
         all_quality += [h["quality"] for h in rec.get("quality_history", []) if "quality" in h]
     recent_q = all_quality[-10:] if len(all_quality) >= 10 else all_quality
-    drill_accuracy = (sum(recent_q) / (5.0 * len(recent_q))) if recent_q else 0.0
+    # In SM-2, quality < 3 is an incorrect response (0% accuracy).
+    # Scores >= 3 are passes: 3=60%, 4=80%, 5=100%.
+    if recent_q:
+        valid_scores = [(q / 5.0) if q >= 3 else 0.0 for q in recent_q]
+        drill_accuracy = sum(valid_scores) / len(valid_scores)
+    else:
+        drill_accuracy = 0.0
 
     mature = sum(1 for r in srs_records if r.get("interval_days", 1) > 14)
     interval_maturity = (mature / len(srs_records)) if srs_records else 0.0

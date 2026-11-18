@@ -87,6 +87,9 @@ export const useCurriculumStore = create((set, get) => ({
         quality_score: qualityScore,
         new_interval_days: res.next_interval_days,
         explanation: res.explanation,
+        why_best: res.why_best,
+        why_played_failed: res.why_played_failed,
+        takeaway: res.takeaway,
         signals: res.signals,
       };
 
@@ -115,6 +118,8 @@ export const useCurriculumStore = create((set, get) => ({
           isCompleted: true,
         },
       });
+      // Refresh profile so updated issue scores and pending drill counts reflect immediately
+      get().fetchProfile().catch(() => {});
     } else {
       set({
         session: {
@@ -133,6 +138,18 @@ export const useCurriculumStore = create((set, get) => ({
         isCompleted: true,
       },
     });
+    get().fetchProfile().catch(() => {});
+  },
+
+  fetchSessionDebrief: async (clusterId, answers = []) => {
+    try {
+      const totalAttempted = answers.length;
+      const totalCorrect = answers.filter((a) => a.is_correct).length;
+      const debrief = await curriculumApi.getSessionDebrief(clusterId, totalAttempted, totalCorrect, answers);
+      return debrief;
+    } catch (err) {
+      return null;
+    }
   },
 
   fetchReportForCluster: async (clusterId) => {

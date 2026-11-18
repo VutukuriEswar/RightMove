@@ -283,37 +283,26 @@ export default function Learn() {
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
-            style={{
-              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(15, 23, 42, 0.9))',
-              border: '1px solid rgba(56, 189, 248, 0.4)',
-              borderRadius: 14,
-              padding: '18px 22px',
-              marginBottom: 24,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-              boxShadow: '0 8px 24px rgba(56, 189, 248, 0.15)',
-            }}
+            className="curriculum-banner"
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: '1.4rem' }}>🔔</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: '1.6rem', filter: 'drop-shadow(0 2px 6px rgba(212, 175, 55, 0.4))' }}>🔔</span>
                 <div>
-                  <div style={{ fontWeight: 700, color: '#38bdf8', fontSize: '0.95rem' }}>
+                  <div className="curriculum-banner-title">
                     New Coach Insight: {unreadCluster?.display_name || 'Weakness Analysis'}
                   </div>
-                  <div style={{ color: '#e2e8f0', fontSize: '0.9rem', marginTop: 2 }}>
+                  <div style={{ color: 'var(--text-body, #2D1B00)', fontSize: '0.92rem', marginTop: 3, fontStyle: 'italic' }}>
                     &ldquo;{unreadReport.pattern_name}&rdquo;
                   </div>
                 </div>
               </div>
               <button
                 type="button"
-                className="btn-secondary interactive"
+                className="btn-curriculum-glow interactive"
                 onClick={() => setExpandedBannerReport((v) => !v)}
-                style={{ padding: '6px 14px', fontSize: '0.85rem' }}
               >
-                {expandedBannerReport ? 'Collapse Report ↑' : 'Read Full Report ↓'}
+                <span>{expandedBannerReport ? 'Collapse Report ↑' : 'Read Full Report ↓'}</span>
               </button>
             </div>
 
@@ -335,7 +324,7 @@ export default function Learn() {
 
         <div style={{ marginBottom: 28 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <h3 style={{ margin: 0, color: '#f8fafc', fontSize: '1.15rem', fontWeight: 700 }}>
+            <h3 style={{ margin: 0, color: 'var(--royal-ink, #1C1008)', fontSize: '1.15rem', fontWeight: 700 }}>
               Active Weakness Profiles
             </h3>
             {pendingDrills > 0 && (
@@ -357,20 +346,12 @@ export default function Learn() {
               ))}
             </div>
           ) : (
-            <div
-              style={{
-                padding: '36px 24px',
-                textAlign: 'center',
-                background: 'rgba(15, 23, 42, 0.4)',
-                borderRadius: 16,
-                border: '1px dashed rgba(255, 255, 255, 0.12)',
-              }}
-            >
+            <div className="curriculum-empty-box">
               <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: 10 }}>♟️</span>
-              <h4 style={{ color: '#fff', fontSize: '1.1rem', margin: '0 0 6px 0' }}>
+              <h4 style={{ color: 'var(--royal-ink, #1C1008)', fontSize: '1.1rem', margin: '0 0 6px 0', fontWeight: 700 }}>
                 No weaknesses logged yet
               </h4>
-              <p style={{ color: '#94a3b8', fontSize: '0.9rem', maxWidth: 440, margin: '0 auto 16px auto', lineHeight: 1.5 }}>
+              <p style={{ color: 'var(--text-dim, #64748b)', fontSize: '0.9rem', maxWidth: 440, margin: '0 auto 16px auto', lineHeight: 1.5 }}>
                 Play games against bots or friends. When 15+ tactical mistakes accumulate, our AI
                 engine automatically groups them into recurring patterns with custom drills here.
               </p>
@@ -387,7 +368,7 @@ export default function Learn() {
         </div>
 
         <div>
-          <h3 style={{ margin: '0 0 14px 0', color: '#f8fafc', fontSize: '1.15rem', fontWeight: 700 }}>
+          <h3 style={{ margin: '0 0 14px 0', color: 'var(--royal-ink, #1C1008)', fontSize: '1.15rem', fontWeight: 700 }}>
             Progress Over Time
           </h3>
           <ImprovementChart clusters={progressData?.clusters || clusters} />

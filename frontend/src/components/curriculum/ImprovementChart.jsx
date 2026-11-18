@@ -19,10 +19,10 @@ export default function ImprovementChart({ clusters = [] }) {
         style={{
           padding: '32px',
           textAlign: 'center',
-          background: 'rgba(15, 23, 42, 0.5)',
+          background: 'var(--surface-card, rgba(0, 0, 0, 0.04))',
           borderRadius: 16,
-          border: '1px dashed rgba(255, 255, 255, 0.1)',
-          color: '#94a3b8',
+          border: '1.5px dashed var(--royal-border, rgba(212, 175, 55, 0.35))',
+          color: 'var(--text-dim, #64748b)',
         }}
       >
         <span>No progress history yet. Complete drill sessions to chart your mastery over time.</span>
@@ -62,11 +62,11 @@ export default function ImprovementChart({ clusters = [] }) {
   return (
     <div
       style={{
-        background: 'rgba(15, 23, 42, 0.8)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
+        background: 'var(--surface-card, rgba(0, 0, 0, 0.04))',
+        border: '1px solid var(--surface-line, rgba(212, 175, 55, 0.2))',
         borderRadius: 16,
         padding: '20px',
-        boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1)',
       }}
     >
       <div
@@ -80,10 +80,10 @@ export default function ImprovementChart({ clusters = [] }) {
         }}
       >
         <div>
-          <h4 style={{ margin: 0, color: '#fff', fontSize: '1.1rem', fontWeight: 700 }}>
+          <h4 style={{ margin: 0, color: 'var(--royal-ink, #1C1008)', fontSize: '1.1rem', fontWeight: 700 }}>
             Weakness Mastery Over Time
           </h4>
-          <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-dim, #64748b)' }}>
             Tracking composite health (0% Active → 100% Resolved)
           </span>
         </div>
@@ -103,7 +103,7 @@ export default function ImprovementChart({ clusters = [] }) {
                   backgroundColor: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
                 }}
               />
-              <span style={{ color: '#cbd5e1' }}>{c.display_name}</span>
+              <span style={{ color: 'var(--text-body, #2D1B00)' }}>{c.display_name}</span>
             </div>
           ))}
         </div>
@@ -123,7 +123,7 @@ export default function ImprovementChart({ clusters = [] }) {
                   y1={y}
                   x2={width - padding.right}
                   y2={y}
-                  stroke="rgba(255, 255, 255, 0.08)"
+                  stroke="var(--surface-line, rgba(0, 0, 0, 0.12))"
                   strokeDasharray="4 4"
                 />
                 <text
@@ -193,7 +193,7 @@ export default function ImprovementChart({ clusters = [] }) {
                     cy={pt.y}
                     r={hoveredPoint && hoveredPoint.pt === pt ? 6 : 4}
                     fill={color}
-                    stroke="#0f172a"
+                    stroke="rgba(0,0,0,0.5)"
                     strokeWidth="2"
                     style={{ cursor: 'pointer', transition: 'r 0.15s ease' }}
                     onMouseEnter={() => setHoveredPoint({ pt, color })}
@@ -212,7 +212,7 @@ export default function ImprovementChart({ clusters = [] }) {
                 width="120"
                 height="32"
                 rx="6"
-                fill="#0f172a"
+                fill="var(--surface-card, rgba(15,23,42,0.9))"
                 stroke={hoveredPoint.color}
                 strokeWidth="1.5"
               />

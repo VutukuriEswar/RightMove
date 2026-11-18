@@ -126,8 +126,7 @@ async def call_openrouter(system: str, user: str, timeout: float = 25.0) -> Opti
         ],
         "temperature": 0.2,
         "max_tokens": 800,
-        "include_reasoning": False,
-        "reasoning": {"exclude": True},
+        "reasoning": {"effort": "none"},
     }
 
     try:
@@ -144,6 +143,15 @@ async def call_openrouter(system: str, user: str, timeout: float = 25.0) -> Opti
                         raw = msg.get("reasoning")
                     raw_str = raw.strip() if isinstance(raw, str) else str(raw).strip()
                     content = re.sub(r"(?is)<think>.*?</think>", "", raw_str).strip()
+                    if not content:
+                        # Model put everything inside <think> tags (reasoning model quirk) —
+                        # extract the content inside the tags rather than discarding it
+                        think_match = re.search(r"(?is)<think>(.*?)</think>", raw_str)
+                        if think_match:
+                            content = think_match.group(1).strip()
+                        # Also try the dedicated reasoning field as last resort
+                        if not content and msg.get("reasoning"):
+                            content = str(msg["reasoning"]).strip()
                     if content:
                         return content
             logger.warning(f"[llm] OpenRouter returned status {res.status_code}: {res.text[:150]}")

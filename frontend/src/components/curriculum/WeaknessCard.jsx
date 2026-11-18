@@ -59,17 +59,7 @@ export default function WeaknessCard({ cluster }) {
   const stageStyle = getStageBadgeStyle(cluster.stage);
 
   return (
-    <div
-      style={{
-        background: 'rgba(15, 23, 42, 0.75)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        borderRadius: 16,
-        padding: '20px',
-        marginBottom: '16px',
-        backdropFilter: 'blur(12px)',
-        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.3)',
-      }}
-    >
+    <div className="curriculum-card" style={{ marginBottom: '16px' }}>
       <div
         style={{
           display: 'flex',
@@ -85,7 +75,7 @@ export default function WeaknessCard({ cluster }) {
               style={{
                 fontSize: '1.2rem',
                 fontWeight: 700,
-                color: '#fff',
+                color: 'var(--royal-ink, #1C1008)',
                 margin: 0,
               }}
             >
@@ -112,7 +102,7 @@ export default function WeaknessCard({ cluster }) {
               alignItems: 'center',
               gap: 12,
               fontSize: '0.85rem',
-              color: '#94a3b8',
+              color: 'var(--text-dim, #64748b)',
               flexWrap: 'wrap',
             }}
           >
@@ -124,7 +114,7 @@ export default function WeaknessCard({ cluster }) {
                 <span>•</span>
                 <span
                   style={{
-                    color: '#38bdf8',
+                    color: 'var(--royal-crimson, #8B2500)',
                     fontWeight: 600,
                   }}
                 >
@@ -147,7 +137,7 @@ export default function WeaknessCard({ cluster }) {
           alignItems: 'center',
           marginTop: 16,
           paddingTop: 14,
-          borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+          borderTop: '1px solid var(--surface-line, rgba(212, 175, 55, 0.2))',
           flexWrap: 'wrap',
           gap: 10,
         }}
@@ -156,9 +146,9 @@ export default function WeaknessCard({ cluster }) {
           type="button"
           onClick={handleToggleReport}
           style={{
-            background: 'rgba(255, 255, 255, 0.05)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            color: expanded ? '#38bdf8' : '#cbd5e1',
+            background: 'var(--surface-1, rgba(0, 0, 0, 0.06))',
+            border: '1px solid var(--royal-border, rgba(212, 175, 55, 0.3))',
+            color: expanded ? 'var(--royal-crimson, #8B2500)' : 'var(--text-body, #2D1B00)',
             borderRadius: 8,
             padding: '8px 14px',
             fontSize: '0.85rem',

@@ -252,6 +252,13 @@ export const curriculumApi = {
   getReport: (clusterId) => api.get(`/api/curriculum/report/${encodeURIComponent(clusterId)}`),
   getReports: () => api.get('/api/curriculum/reports'),
   acknowledgeReport: (reportId) => api.post(`/api/curriculum/report/${encodeURIComponent(reportId)}/acknowledge`, {}),
+  getSessionDebrief: (clusterId, totalAttempted, totalCorrect, positions = []) =>
+    api.post('/api/curriculum/drills/session-debrief', {
+      cluster_id: clusterId,
+      total_attempted: totalAttempted,
+      total_correct: totalCorrect,
+      positions,
+    }),
   getProgress: () => api.get('/api/curriculum/progress'),
   getHistory: () => api.get('/api/curriculum/history'),
   triggerCluster: (userId) => api.post(`/internal/curriculum/cluster/${encodeURIComponent(userId)}`, {}),

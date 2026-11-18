@@ -128,11 +128,6 @@ export function NavBar() {
               onClick={() => setMenuOpen(false)}
             >
               Learn
-              {isLoggedIn && curriculumTotal > 0 && (
-                <span className="nav-badge">
-                  {curriculumTotal > 99 ? '99+' : curriculumTotal}
-                </span>
-              )}
             </Link>
           </li>
           <li>

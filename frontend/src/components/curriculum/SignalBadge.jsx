@@ -7,8 +7,8 @@ export default function SignalBadge({ signals = [], title = 'Ask yourself before
   return (
     <div
       style={{
-        background: 'rgba(15, 23, 42, 0.65)',
-        border: '1px solid rgba(56, 189, 248, 0.25)',
+        background: 'var(--surface-1, rgba(0, 0, 0, 0.06))',
+        border: '1px solid var(--royal-border, rgba(212, 175, 55, 0.3))',
         borderRadius: 12,
         padding: '16px 20px',
         margin: '12px 0',
@@ -20,7 +20,7 @@ export default function SignalBadge({ signals = [], title = 'Ask yourself before
           alignItems: 'center',
           gap: 8,
           marginBottom: 12,
-          color: '#38bdf8',
+          color: 'var(--royal-crimson, #8B2500)',
           fontWeight: 600,
           fontSize: '0.9rem',
           letterSpacing: '0.04em',
@@ -36,15 +36,15 @@ export default function SignalBadge({ signals = [], title = 'Ask yourself before
             key={idx}
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: idx * 0.1 }}
+            transition={{ delay: idx * 0.08 }}
             style={{
               display: 'flex',
               alignItems: 'flex-start',
               gap: 12,
-              background: 'rgba(255, 255, 255, 0.03)',
+              background: 'var(--surface-card, rgba(0, 0, 0, 0.04))',
               padding: '10px 14px',
               borderRadius: 8,
-              borderLeft: '3px solid #38bdf8',
+              borderLeft: '3px solid var(--royal-gold, #D4AF37)',
             }}
           >
             <span
@@ -55,8 +55,8 @@ export default function SignalBadge({ signals = [], title = 'Ask yourself before
                 width: 22,
                 height: 22,
                 borderRadius: '50%',
-                background: 'rgba(56, 189, 248, 0.15)',
-                color: '#38bdf8',
+                background: 'rgba(212, 175, 55, 0.18)',
+                color: 'var(--royal-gold, #D4AF37)',
                 fontWeight: 700,
                 fontSize: '0.8rem',
                 flexShrink: 0,
@@ -66,7 +66,7 @@ export default function SignalBadge({ signals = [], title = 'Ask yourself before
             </span>
             <span
               style={{
-                color: '#e2e8f0',
+                color: 'var(--royal-ink, #1C1008)',
                 fontSize: '0.95rem',
                 lineHeight: 1.45,
               }}

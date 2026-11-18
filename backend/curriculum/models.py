@@ -146,7 +146,31 @@ class DrillSubmitResponse(BaseModel):
     best_move: str
     next_interval_days: int
     explanation: str
+    why_best: Optional[str] = None
+    why_played_failed: Optional[str] = None
+    takeaway: Optional[str] = None
     signals: list[str] = Field(default_factory=list)
+
+
+# Models end-of-session debrief request payload
+class DrillSessionDebriefRequest(BaseModel):
+    cluster_id: Optional[str] = None
+    total_attempted: int = 0
+    total_correct: int = 0
+    positions: list[dict] = Field(default_factory=list)
+
+
+# Models end-of-session debrief response payload
+class DrillSessionDebriefResponse(BaseModel):
+    cluster_name: str
+    health_before: float
+    health_after: float
+    health_delta: str
+    stage_after: str
+    style_diagnosis: str
+    what_to_do_instead: str
+    action_plan_to_overcome: str
+    coach_takeaway: str
 
 
 # Models cluster representation with calculated health and status

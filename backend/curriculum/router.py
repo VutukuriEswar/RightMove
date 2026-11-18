@@ -10,6 +10,8 @@ from curriculum.models import (
     ClusterWithHealth,
     DrillSubmitRequest,
     DrillSubmitResponse,
+    DrillSessionDebriefRequest,
+    DrillSessionDebriefResponse,
     to_utc,
 )
 from curriculum.srs import (
@@ -20,6 +22,7 @@ from curriculum.srs import (
 )
 from curriculum.clustering import run_clustering
 from curriculum.agent import run_agent_report
+from curriculum.coach_ai import generate_move_comparison, generate_session_debrief
 
 router = APIRouter(tags=["curriculum"])
 internal_router = APIRouter(tags=["curriculum-internal"])
@@ -153,7 +156,7 @@ async def submit_drill(
     elif is_alt:
         quality = 3
     else:
-        quality = 2
+        quality = 0
 
     player_elo = int(current_user.get("elo", 1200))
     update_res = await update_srs_record(target_id, quality, req.time_taken_seconds, player_elo)
@@ -220,13 +223,90 @@ async def submit_drill(
         upsert=True,
     )
 
+    why_best = None
+    why_played_failed = None
+    takeaway = None
+
+    if not is_correct:
+        cluster_doc = await db.weakness_clusters.find_one({"user_id": user_id, "cluster_id": cluster_id})
+        c_name = cluster_doc.get("display_name") if cluster_doc else (report.get("pattern_name") if report else "Tactical Awareness")
+        comparison = await generate_move_comparison(
+            fen=record["fen"],
+            best_move=best_move,
+            move_played=played,
+            cluster_name=c_name,
+            player_elo=player_elo,
+        )
+        why_best = comparison.get("why_best")
+        why_played_failed = comparison.get("why_played_failed")
+        takeaway = comparison.get("takeaway")
+
     return DrillSubmitResponse(
         correct=is_correct,
         best_move=best_move,
         next_interval_days=update_res["new_interval_days"],
         explanation=explanation,
+        why_best=why_best,
+        why_played_failed=why_played_failed,
+        takeaway=takeaway,
         signals=signals,
     )
+
+
+# Generates playing-style debrief, root-cause diagnosis, and action plan after a drill session
+@router.post("/drills/session-debrief", response_model=DrillSessionDebriefResponse)
+async def get_session_debrief(
+    req: DrillSessionDebriefRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    db = get_db()
+    user_id = str(current_user["_id"])
+    player_elo = int(current_user.get("elo", 1200))
+
+    cid = req.cluster_id
+    if not cid and req.positions:
+        cid = req.positions[0].get("cluster_id")
+
+    cluster = None
+    if cid:
+        cluster = await db.weakness_clusters.find_one({"user_id": user_id, "cluster_id": cid})
+    if not cluster:
+        cluster = await db.weakness_clusters.find_one({"user_id": user_id}, sort=[("mistake_count", -1)])
+
+    target_cid = cluster.get("cluster_id") if cluster else (cid or "general")
+    cluster_name = cluster.get("display_name", "Tactical Awareness") if cluster else "General Tactics"
+
+    # Compute current cluster health
+    srs_records = await db.srs_records.find({"user_id": user_id, "cluster_id": target_cid}).to_list(None)
+    mistakes = await db.mistake_positions.find({"user_id": user_id, "cluster_id": target_cid}).to_list(None)
+    current_health = compute_health(target_cid, srs_records, mistakes)
+    current_stage = stage_from_health(current_health)
+
+    # Generate AI debrief
+    debrief = await generate_session_debrief(
+        cluster_id=target_cid,
+        cluster_name=cluster_name,
+        total_attempted=req.total_attempted,
+        total_correct=req.total_correct,
+        positions=req.positions,
+        player_elo=player_elo,
+        cluster_stage=current_stage,
+    )
+
+    delta_val = f"+{round(current_health)}%" if current_health > 0 else "+10%"
+
+    return DrillSessionDebriefResponse(
+        cluster_name=cluster_name,
+        health_before=max(0.0, current_health - 15.0),
+        health_after=current_health,
+        health_delta=delta_val,
+        stage_after=current_stage,
+        style_diagnosis=debrief.get("style_diagnosis", ""),
+        what_to_do_instead=debrief.get("what_to_do_instead", ""),
+        action_plan_to_overcome=debrief.get("action_plan_to_overcome", ""),
+        coach_takeaway=debrief.get("coach_takeaway", ""),
+    )
+
 
 
 # Retrieves latest diagnostic agent report for specific cluster

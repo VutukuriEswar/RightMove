@@ -5,6 +5,37 @@ import { useBoardThemeStore } from '../../store/boardThemeStore';
 
 const Board3D = lazy(() => import('../board/Board3D'));
 
+// Helper to resolve move string to chess.js move details
+function resolveMove(fen, moveStr) {
+  if (!fen || !moveStr) return null;
+  try {
+    const g = new Chess(fen);
+    let m = null;
+    try {
+      m = g.move(moveStr);
+    } catch (_) {}
+
+    if (!m && moveStr.length >= 4) {
+      const from = moveStr.slice(0, 2);
+      const to = moveStr.slice(2, 4);
+      const promotion = moveStr.slice(4) || 'q';
+      try {
+        m = g.move({ from, to, promotion });
+      } catch (_) {}
+    }
+
+    if (m) {
+      return {
+        from: m.from,
+        to: m.to,
+        san: m.san,
+        fenAfter: m.after,
+      };
+    }
+  } catch (_) {}
+  return null;
+}
+
 export default function DrillBoard({
   fen,
   onMove,
@@ -23,33 +54,96 @@ export default function DrillBoard({
   });
 
   const [lastMove, setLastMove] = useState(null);
+  const [displayMode, setDisplayMode] = useState('play'); // 'play' | 'compare' | 'best' | 'played'
 
   useEffect(() => {
     try {
       const nextGame = new Chess(fen);
       setGame(nextGame);
       setLastMove(null);
+      setDisplayMode('play');
     } catch (_) {
       setGame(new Chess());
       setLastMove(null);
+      setDisplayMode('play');
     }
   }, [fen]);
 
-  const turn = game.turn() === 'w' ? 'white' : 'black';
-  const turnLabel = turn === 'white' ? 'White to move' : 'Black to move';
+  // When attempt fails, default to compare view to visualize both moves
+  useEffect(() => {
+    if (attemptState && !attemptState.isCorrect) {
+      setDisplayMode('compare');
+    } else {
+      setDisplayMode('play');
+    }
+  }, [attemptState]);
 
-  // Highlight squares when move attempt is evaluated
+  const bestDetails = useMemo(() => {
+    if (!attemptState || !attemptState.bestMove) return null;
+    return resolveMove(fen, attemptState.bestMove);
+  }, [fen, attemptState]);
+
+  const playedDetails = useMemo(() => {
+    if (!attemptState || !attemptState.movePlayed) return null;
+    return resolveMove(fen, attemptState.movePlayed);
+  }, [fen, attemptState]);
+
+  // Determine active FEN based on displayMode
+  const activeFen = useMemo(() => {
+    if (!attemptState || attemptState.isCorrect || displayMode === 'play') {
+      return game.fen();
+    }
+    if (displayMode === 'best' && bestDetails?.fenAfter) {
+      return bestDetails.fenAfter;
+    }
+    if (displayMode === 'played' && playedDetails?.fenAfter) {
+      return playedDetails.fenAfter;
+    }
+    return fen; // 'compare' shows original position with overlaid arrows
+  }, [displayMode, attemptState, game, bestDetails, playedDetails, fen]);
+
+  // Active arrows to render visually on the board
+  const arrows = useMemo(() => {
+    if (!attemptState) return null;
+
+    if (attemptState.isCorrect) {
+      if (bestDetails) {
+        return [{ from: bestDetails.from, to: bestDetails.to, color: '#10b981' }];
+      }
+      return null;
+    }
+
+    // When incorrect:
+    if (displayMode === 'best' && bestDetails) {
+      return [{ from: bestDetails.from, to: bestDetails.to, color: '#10b981' }];
+    }
+    if (displayMode === 'played' && playedDetails) {
+      return [{ from: playedDetails.from, to: playedDetails.to, color: '#ef4444' }];
+    }
+    if (displayMode === 'compare') {
+      const list = [];
+      if (bestDetails) list.push({ from: bestDetails.from, to: bestDetails.to, color: '#10b981' });
+      if (playedDetails) list.push({ from: playedDetails.from, to: playedDetails.to, color: '#ef4444' });
+      return list.length > 0 ? list : null;
+    }
+    return null;
+  }, [attemptState, displayMode, bestDetails, playedDetails]);
+
   const highlightSquares = useMemo(() => {
     if (!attemptState) return [];
+    if (attemptState.isCorrect) {
+      return bestDetails ? [bestDetails.from, bestDetails.to] : [];
+    }
+    if (displayMode === 'best' && bestDetails) return [bestDetails.from, bestDetails.to];
+    if (displayMode === 'played' && playedDetails) return [playedDetails.from, playedDetails.to];
     const list = [];
-    if (attemptState.movePlayed && attemptState.movePlayed.length >= 4) {
-      list.push(attemptState.movePlayed.slice(0, 2), attemptState.movePlayed.slice(2, 4));
-    }
-    if (attemptState.bestMove && attemptState.bestMove.length >= 4) {
-      list.push(attemptState.bestMove.slice(0, 2), attemptState.bestMove.slice(2, 4));
-    }
+    if (bestDetails) list.push(bestDetails.from, bestDetails.to);
+    if (playedDetails) list.push(playedDetails.from, playedDetails.to);
     return list;
-  }, [attemptState]);
+  }, [attemptState, displayMode, bestDetails, playedDetails]);
+
+  const turn = (new Chess(fen)).turn() === 'w' ? 'white' : 'black';
+  const turnLabel = turn === 'white' ? 'White to move' : 'Black to move';
 
   const handleBoardMove = useCallback(
     (uci) => {
@@ -159,6 +253,86 @@ export default function DrillBoard({
         </div>
       </div>
 
+      {/* Visual Move Comparison Selector (Active when incorrect) */}
+      {attemptState && !attemptState.isCorrect && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            width: '100%',
+            marginBottom: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setDisplayMode('best')}
+            style={{
+              background: displayMode === 'best' ? '#10b981' : 'var(--surface-card, rgba(0,0,0,0.06))',
+              color: displayMode === 'best' ? '#ffffff' : 'var(--royal-ink, #1C1008)',
+              border: `1.5px solid ${displayMode === 'best' ? '#10b981' : 'var(--royal-border, rgba(212, 175, 55, 0.35))'}`,
+              borderRadius: 8,
+              padding: '5px 12px',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>🟢 Best Move:</span>
+            <span>{bestDetails?.san || attemptState.bestMove}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setDisplayMode('played')}
+            style={{
+              background: displayMode === 'played' ? '#ef4444' : 'var(--surface-card, rgba(0,0,0,0.06))',
+              color: displayMode === 'played' ? '#ffffff' : 'var(--royal-ink, #1C1008)',
+              border: `1.5px solid ${displayMode === 'played' ? '#ef4444' : 'var(--royal-border, rgba(212, 175, 55, 0.35))'}`,
+              borderRadius: 8,
+              padding: '5px 12px',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>🔴 Your Move:</span>
+            <span>{playedDetails?.san || attemptState.movePlayed}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setDisplayMode('compare')}
+            style={{
+              background: displayMode === 'compare' ? 'var(--royal-gold, #D4AF37)' : 'var(--surface-card, rgba(0,0,0,0.06))',
+              color: displayMode === 'compare' ? '#1C1008' : 'var(--royal-ink, #1C1008)',
+              border: `1.5px solid ${displayMode === 'compare' ? 'var(--royal-gold, #D4AF37)' : 'var(--royal-border, rgba(212, 175, 55, 0.35))'}`,
+              borderRadius: 8,
+              padding: '5px 12px',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>🔍 Compare Both</span>
+          </button>
+        </div>
+      )}
+
       {/* Main Board Container */}
       <div
         className="drill-board-container"
@@ -191,7 +365,7 @@ export default function DrillBoard({
             }
           >
             <Board3D
-              fen={game.fen()}
+              fen={activeFen}
               playerColor={turn}
               onMove={handleBoardMove}
               disabled={disabled || (attemptState !== null && !attemptState.isCorrect)}
@@ -202,12 +376,13 @@ export default function DrillBoard({
         ) : (
           <Board2D
             id="drillBoard2D"
-            fen={game.fen()}
+            fen={activeFen}
             playerColor={turn}
             onMove={handleBoardMove}
             disabled={disabled || (attemptState !== null && !attemptState.isCorrect)}
             lastMove={lastMove}
             highlightSquares={highlightSquares}
+            arrows={arrows}
           />
         )}
       </div>

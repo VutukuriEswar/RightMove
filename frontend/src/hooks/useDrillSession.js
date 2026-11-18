@@ -59,18 +59,24 @@ export function useDrillSession(clusterIdFilter = null) {
       if (!currentPos || attemptState !== null || submitting) return;
       setTimerRunning(false);
 
+      // Normalize a move string: strip check/capture/promotion annotation for loose compare
+      const norm = (s) => String(s || '').trim().replace(/[+#!?]/g, '').toLowerCase();
+
       const targetBest = (currentPos.best_move || '').trim();
-      const altMoves = (currentPos.alternative_moves || []).map((m) => String(m).trim().toLowerCase());
+      const altMoves = (currentPos.alternative_moves || []).map((m) => norm(m));
 
       const playedSan = (moveSan || '').trim();
       const playedUci = (moveUci || '').trim();
 
       const isExact =
+        norm(playedSan) === norm(targetBest) ||
+        (playedUci && norm(playedUci) === norm(targetBest)) ||
         playedSan.toLowerCase() === targetBest.toLowerCase() ||
         (playedUci && playedUci.toLowerCase() === targetBest.toLowerCase());
+
       const isAlt =
-        altMoves.includes(playedSan.toLowerCase()) ||
-        (playedUci && altMoves.includes(playedUci.toLowerCase()));
+        altMoves.includes(norm(playedSan)) ||
+        (playedUci && altMoves.includes(norm(playedUci)));
 
       const isCorrect = isExact || isAlt;
 
@@ -109,48 +115,40 @@ export function useDrillSession(clusterIdFilter = null) {
           setSubmitting(false);
         }
       } else {
-        setAttemptState({
-          isCorrect: false,
-          isAlternative: false,
-          bestMove: targetBest,
-          movePlayed: playedSan || playedUci,
-          explanation: currentPos.explanation,
-          signals: currentPos.signals || [],
-          awaitingRating: true,
-        });
-      }
-    },
-    [currentPos, attemptState, submitting, timeTaken, submitCurrentDrill]
-  );
-
-  const handleRatingSubmit = useCallback(
-    async (qualityScore) => {
-      if (!currentPos || !attemptState || submitting) return;
-      setSubmitting(true);
-      try {
-        const res = await submitCurrentDrill(
-          currentPos._id || currentPos.id,
-          attemptState.movePlayed,
-          timeTaken,
-          qualityScore
-        );
-        setAttemptState((prev) => ({
-          ...prev,
-          awaitingRating: false,
-          qualityScore,
-          explanation: res.explanation || prev.explanation,
-          signals: res.signals || prev.signals,
-          nextIntervalDays: res.next_interval_days,
-        }));
-      } catch (_) {
-        setAttemptState((prev) => ({
-          ...prev,
-          awaitingRating: false,
-          qualityScore,
-          nextIntervalDays: 1,
-        }));
-      } finally {
-        setSubmitting(false);
+        setSubmitting(true);
+        try {
+          const res = await submitCurrentDrill(
+            currentPos._id || currentPos.id,
+            playedSan || playedUci,
+            timeTaken,
+            0
+          );
+          setAttemptState({
+            isCorrect: false,
+            isAlternative: false,
+            bestMove: targetBest,
+            movePlayed: playedSan || playedUci,
+            explanation: res.explanation || currentPos.explanation,
+            whyBest: res.why_best || `In this position, ${targetBest} is the most active tactical choice.`,
+            whyPlayedFailed: res.why_played_failed || `${playedSan || playedUci} misses the critical tactical response.`,
+            takeaway: res.takeaway || 'Scan opponent checks and forcing replies before choosing candidate moves.',
+            signals: res.signals || [],
+          });
+        } catch (_) {
+          setAttemptState({
+            isCorrect: false,
+            isAlternative: false,
+            bestMove: targetBest,
+            movePlayed: playedSan || playedUci,
+            explanation: currentPos.explanation,
+            whyBest: `In this position, ${targetBest} is the most active tactical choice.`,
+            whyPlayedFailed: `${playedSan || playedUci} misses the critical tactical response.`,
+            takeaway: 'Scan opponent checks and forcing replies before choosing candidate moves.',
+            signals: currentPos.signals || [],
+          });
+        } finally {
+          setSubmitting(false);
+        }
       }
     },
     [currentPos, attemptState, submitting, timeTaken, submitCurrentDrill]
@@ -172,7 +170,6 @@ export function useDrillSession(clusterIdFilter = null) {
     submitting,
     queueLoading,
     onPlayerMove: handleMove,
-    onRatingSubmit: handleRatingSubmit,
     onNextPosition: handleNext,
     onEndSession: finishSession,
   };

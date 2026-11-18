@@ -1,8 +1,18 @@
 import React from 'react';
+import { Chess } from 'chess.js';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import SignalBadge from './SignalBadge';
 import Board2D from '../board/Board2D';
+
+function getBoardOrientation(fenStr) {
+  try {
+    const c = new Chess(fenStr);
+    return c.turn() === 'b' ? 'black' : 'white';
+  } catch (_) {
+    return 'white';
+  }
+}
 
 export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) {
   const navigate = useNavigate();
@@ -29,25 +39,19 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
 
   return (
     <motion.div
+      className="curriculum-report-panel"
       initial={{ opacity: 0, height: 0 }}
       animate={{ opacity: 1, height: 'auto' }}
       exit={{ opacity: 0, height: 0 }}
-      style={{
-        background: 'rgba(15, 23, 42, 0.95)',
-        border: '1px solid rgba(56, 189, 248, 0.3)',
-        borderRadius: 16,
-        padding: '24px',
-        marginTop: 16,
-        overflow: 'hidden',
-        boxShadow: '0 12px 32px rgba(0, 0, 0, 0.4)',
-      }}
+      style={{ overflow: 'hidden' }}
     >
+      {/* Header */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+          borderBottom: '1px solid var(--surface-line, rgba(212, 175, 55, 0.2))',
           paddingBottom: 16,
           marginBottom: 20,
         }}
@@ -57,7 +61,7 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
             style={{
               fontSize: '0.75rem',
               fontWeight: 700,
-              color: '#38bdf8',
+              color: 'var(--royal-crimson, #8B2500)',
               letterSpacing: '0.08em',
               textTransform: 'uppercase',
             }}
@@ -68,7 +72,7 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
             style={{
               fontSize: '1.35rem',
               fontWeight: 700,
-              color: '#fff',
+              color: 'var(--royal-ink, #1C1008)',
               margin: '4px 0 0 0',
             }}
           >
@@ -76,17 +80,20 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           </h3>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Generated {dateStr}</span>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-dim, #64748b)' }}>
+            Generated {dateStr}
+          </span>
         </div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* What is happening */}
         <div>
           <div
             style={{
-              fontSize: '0.8rem',
+              fontSize: '0.75rem',
               fontWeight: 700,
-              color: '#94a3b8',
+              color: 'var(--text-dim, #64748b)',
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
               marginBottom: 6,
@@ -97,7 +104,7 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           <p
             style={{
               fontSize: '1.05rem',
-              color: '#f8fafc',
+              color: 'var(--royal-ink, #1C1008)',
               lineHeight: 1.55,
               margin: 0,
               fontWeight: 500,
@@ -107,12 +114,13 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           </p>
         </div>
 
+        {/* Why it keeps happening */}
         <div>
           <div
             style={{
-              fontSize: '0.8rem',
+              fontSize: '0.75rem',
               fontWeight: 700,
-              color: '#94a3b8',
+              color: 'var(--text-dim, #64748b)',
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
               marginBottom: 6,
@@ -123,7 +131,7 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           <p
             style={{
               fontSize: '0.95rem',
-              color: '#cbd5e1',
+              color: 'var(--text-body, #2D1B00)',
               lineHeight: 1.6,
               margin: 0,
             }}
@@ -137,12 +145,13 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           title={`Ask yourself before moving in ${title.toLowerCase()}`}
         />
 
+        {/* How to practice */}
         <div>
           <div
             style={{
-              fontSize: '0.8rem',
+              fontSize: '0.75rem',
               fontWeight: 700,
-              color: '#94a3b8',
+              color: 'var(--text-dim, #64748b)',
               letterSpacing: '0.06em',
               textTransform: 'uppercase',
               marginBottom: 6,
@@ -153,7 +162,7 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           <p
             style={{
               fontSize: '0.95rem',
-              color: '#cbd5e1',
+              color: 'var(--text-body, #2D1B00)',
               lineHeight: 1.6,
               margin: 0,
             }}
@@ -162,13 +171,14 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           </p>
         </div>
 
+        {/* Representative positions — large boards */}
         {positions.length > 0 && (
           <div>
             <div
               style={{
-                fontSize: '0.8rem',
+                fontSize: '0.75rem',
                 fontWeight: 700,
-                color: '#94a3b8',
+                color: 'var(--text-dim, #64748b)',
                 letterSpacing: '0.06em',
                 textTransform: 'uppercase',
                 marginBottom: 12,
@@ -176,40 +186,24 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
             >
               Representative Mistake Positions
             </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                gap: 16,
-              }}
-            >
+            <div className="curriculum-rep-grid">
               {positions.slice(0, 3).map((fenStr, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    background: 'rgba(0, 0, 0, 0.35)',
-                    borderRadius: 10,
-                    padding: 10,
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                  }}
-                >
-                  <div style={{ width: '100%', maxWidth: 170, pointerEvents: 'none' }}>
+                <div key={idx} className="curriculum-rep-board-card">
+                  <div style={{ width: '100%', maxWidth: 320, pointerEvents: 'none' }}>
                     <Board2D
                       id={`reportBoard-${report._id || 'rep'}-${idx}`}
                       fen={fenStr}
                       disabled
-                      playerColor="white"
+                      playerColor={getBoardOrientation(fenStr)}
                     />
                   </div>
                   <span
                     style={{
-                      fontSize: '0.75rem',
-                      color: '#94a3b8',
-                      marginTop: 8,
+                      fontSize: '0.8rem',
+                      color: 'var(--text-dim, #64748b)',
+                      marginTop: 10,
                       fontFamily: 'monospace',
+                      fontWeight: 600,
                     }}
                   >
                     Position #{idx + 1}
@@ -221,6 +215,7 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
         )}
       </div>
 
+      {/* Footer actions */}
       <div
         style={{
           display: 'flex',
@@ -228,7 +223,9 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           alignItems: 'center',
           marginTop: 24,
           paddingTop: 16,
-          borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+          borderTop: '1px solid var(--surface-line, rgba(212, 175, 55, 0.2))',
+          flexWrap: 'wrap',
+          gap: 12,
         }}
       >
         <button
@@ -236,8 +233,8 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
           onClick={onDismiss}
           style={{
             background: 'transparent',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            color: '#94a3b8',
+            border: '1px solid var(--royal-border, rgba(212, 175, 55, 0.4))',
+            color: 'var(--text-dim, #64748b)',
             borderRadius: 8,
             padding: '8px 16px',
             cursor: 'pointer',
@@ -256,7 +253,7 @@ export default function AgentReport({ report, cluster, onDismiss, onDrillNow }) 
             fontSize: '0.95rem',
           }}
         >
-          Start Drilling →
+          START DRILLING →
         </button>
       </div>
     </motion.div>
