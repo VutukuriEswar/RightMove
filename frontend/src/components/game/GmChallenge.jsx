@@ -175,6 +175,24 @@ export default function GmChallenge() {
       {challenge && (
         <div className="gm-split">
           <div className="gm-board">
+            {challenge.curriculum_label && (
+              <div style={{
+                background: 'rgba(56, 189, 248, 0.15)',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                borderRadius: 8,
+                padding: '8px 12px',
+                marginBottom: 8,
+                fontSize: '0.85rem',
+                color: '#38bdf8',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}>
+                <span>🎯</span>
+                <span>{challenge.curriculum_label}</span>
+              </div>
+            )}
             <Board2D
               id="gmChallengeBoard"
               fen={playedFen || challenge.fen}

@@ -6,7 +6,9 @@ import { moveCacheKey, getCachedMove, setCachedMove } from '../lib/reviewCache';
 import Board2D from '../components/board/Board2D';
 import MoveList from '../components/game/MoveList';
 import GameSummaryCard from '../components/game/GameSummaryCard';
+import AiTierBadge from '../components/shared/AiTierBadge';
 import { useAuthStore } from '../store/authStore';
+import { useCurriculumStore } from '../store/curriculumStore';
 
 const ENGINE_INTERVAL_MS = 800;
 
@@ -36,6 +38,8 @@ export default function Review() {
   const [rematchBusy, setRematchBusy] = useState(false);
   const reportRef = useRef(null);
   const insightCache = useRef(new Map());
+  const currentMoveIdxRef = useRef(currentMoveIdx);
+  currentMoveIdxRef.current = currentMoveIdx;
 
   useEffect(() => {
     let cancelled = false;
@@ -134,6 +138,17 @@ export default function Review() {
     const pct = mine.length ? Math.round((strong / mine.length) * 100) : null;
     return { total: mine.length, strong, pct };
   }, [mergedMoves, playerColor]);
+
+  const clusters = useCurriculumStore((s) => s.clusters);
+  const matchedCluster = useMemo(() => {
+    if (!clusters || clusters.length === 0 || !mergedMoves.length) return null;
+    const mistakesCount = mergedMoves.filter((m) => {
+      const k = normalizeClassification(m.classification);
+      return k === 'mistake' || k === 'blunder';
+    }).length;
+    if (mistakesCount === 0) return null;
+    return { cluster: clusters[0], count: mistakesCount };
+  }, [clusters, mergedMoves]);
 
   useEffect(() => {
     if (loading) return;
@@ -269,7 +284,7 @@ export default function Review() {
           if (insight && !insight.error) entry.insight = insight;
           if (position && !position.error) entry.position = position;
           insightCache.current.set(memKey, entry);
-          setCachedMove(storeKey, entry).catch(() => {});
+          setCachedMove(storeKey, entry).catch(() => { });
           setMoveInsight(entry.insight || null);
           setMovePosition(entry.position || null);
         }
@@ -280,6 +295,45 @@ export default function Review() {
     }, 450);
     return () => { cancelled = true; clearTimeout(t); };
   }, [currentMoveIdx, moves, fens, id]);
+
+  useEffect(() => {
+    if (!moveInsight || !moveInsight.narrative?.pending_upgrade || currentMoveIdx < 0) return;
+    const curIdx = currentMoveIdx;
+    const fenBefore = fens[curIdx] || 'start';
+    const move = moves[curIdx];
+    const uci = move ? `${move.from}${move.to}${move.promotion || ''}` : null;
+    if (!uci) return;
+    let active = true;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await coachApi.explain(fenBefore, uci, null, 0, null);
+        if (!active) return;
+        if (res && res.narrative && (!res.narrative.pending_upgrade || res.narrative.source_tier !== 'T4')) {
+          if (currentMoveIdxRef.current === curIdx) {
+            setMoveInsight(res);
+          }
+          const memKey = `${id || 'live'}:${curIdx}:${uci}`;
+          const currentEntry = insightCache.current.get(memKey) || {};
+          currentEntry.insight = res;
+          insightCache.current.set(memKey, currentEntry);
+          const storeKey = `${id || 'live'}:${curIdx}:${uci}`;
+          setCachedMove(storeKey, currentEntry).catch(() => {});
+          clearInterval(interval);
+        }
+      } catch (_) {}
+    }, 1500);
+
+    const timer = setTimeout(() => {
+      clearInterval(interval);
+    }, 55000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      clearTimeout(timer);
+    };
+  }, [moveInsight, currentMoveIdx, moves, fens, id]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -331,6 +385,37 @@ export default function Review() {
               />
             </div>
           )}
+          {matchedCluster && (
+            <div
+              style={{
+                background: 'rgba(56, 189, 248, 0.12)',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                borderRadius: 12,
+                padding: '14px 20px',
+                margin: '16px 0',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: '1.3rem' }}>🎯</span>
+                <span style={{ fontSize: '0.92rem', color: '#e2e8f0' }}>
+                  {matchedCluster.count} of your mistakes match your known{' '}
+                  <strong style={{ color: '#38bdf8' }}>{matchedCluster.cluster.display_name}</strong> weakness.
+                </span>
+              </div>
+              <Link
+                to="/learn?tab=curriculum"
+                className="btn-neon interactive"
+                style={{ padding: '6px 14px', fontSize: '0.85rem' }}
+              >
+                Practice Weakness →
+              </Link>
+            </div>
+          )}
           {!moves.length && (
             <div className="review-coach-section">
               <h3>No moves found</h3>
@@ -338,123 +423,126 @@ export default function Review() {
             </div>
           )}
           {moves.length > 0 && (
-          <div className="review-board-container">
-            <div className="review-controls-top">
-              {lastMove && (
-                <span className="review-move-pill">
-                  {Math.floor(currentMoveIdx / 2) + 1}{currentMoveIdx % 2 === 0 ? '.' : '...'} {lastMove.san}
-                  {currentCls && <span className={`badge badge-${currentCls}`} style={{ marginLeft: 8 }}>{currentCls}</span>}
-                </span>
-              )}
-            </div>
-            <div className="board-wrapper">
-              <Board2D id="reviewBoard" fen={currentFen} disabled={true} lastMove={lastMoveSq} />
-            </div>
-            <div className="review-controls-bottom">
-              <button
-                className="btn btn-secondary review-nav-btn"
-                title="Start"
-                aria-label="First move"
-                onClick={() => { setIsPlaying(false); setCurrentMoveIdx(-1); }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
-                </svg>
-              </button>
-              <button
-                className="btn btn-secondary review-nav-btn"
-                title="Prev"
-                aria-label="Previous move"
-                onClick={() => step(-1)}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M18 18l-9-6 9-6v12z"/>
-                </svg>
-              </button>
-              <button
-                className={`review-play-btn ${isPlaying ? 'playing' : ''}`}
-                title={isPlaying ? 'Pause' : 'Play'}
-                aria-label={isPlaying ? 'Pause' : 'Play'}
-                onClick={handlePlayPause}
-              >
-                {isPlaying ? (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-                  </svg>
-                ) : (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '2px' }}>
-                    <path d="M8 5v14l11-7z"/>
-                  </svg>
-                )}
-              </button>
-              <button
-                className="btn btn-secondary review-nav-btn"
-                title="Next"
-                aria-label="Next move"
-                onClick={() => step(1)}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M6 6l9 6-9 6V6z"/>
-                </svg>
-              </button>
-              <button
-                className="btn btn-secondary review-nav-btn"
-                title="End"
-                aria-label="Last move"
-                onClick={() => { setIsPlaying(false); setCurrentMoveIdx(moves.length - 1); }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M6 6v12l8.5-6zm10 0h2v12h-2z"/>
-                </svg>
-              </button>
-            </div>
-            <p className="review-hint">Arrow keys to navigate · Space to play/pause</p>
-            {lastMove && (
-              <div className="review-coach-section">
-                <h3>Move Insight</h3>
-                {moveInsightBusy && !moveInsight && !movePosition && <p className="review-report-text">Analyzing this move...</p>}
-                {!moveInsightBusy && !moveInsight && !movePosition && <p className="review-report-text">Play through the game to see coaching notes for each move.</p>}
-                {(moveInsight || movePosition) && (
-                  <div>
-                    {moveInsight && (
-                    <div>
-                    <p className="review-report-line"><strong>Advantages:</strong></p>
-                    <p className="review-report-text">{moveInsight.thing_1?.summary || moveInsight.narrative?.advantages?.[0] || 'Solid move.'}</p>
-                    {(moveInsight.thing_1?.reasons || moveInsight.narrative?.advantages || []).slice(0, 3).map((r, i) => (
-                      <p key={i} className="review-report-text">* {typeof r === 'string' ? r : JSON.stringify(r)}</p>
-                    ))}
-                    <p className="review-report-line" style={{ marginTop: 8 }}><strong>Disadvantages:</strong></p>
-                    {moveInsight.thing_2?.has_defects ? (
-                      <div>
-                        <p className="review-report-text">{moveInsight.thing_2?.summary}</p>
-                        {(moveInsight.thing_2?.reasons_to_avoid || []).slice(0, 3).map((r, i) => (
-                          <p key={i} className="review-report-text">* {r}</p>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="review-report-text">No clear harm.</p>
-                    )}
-                    {moveInsight.best_move?.san && (
-                      <p className="review-report-text" style={{ marginTop: 8 }}>
-                        <strong>Best was:</strong> {moveInsight.best_move.san}
-                      </p>
-                    )}
-                    </div>
-                    )}
-                    {movePosition && (
-                      <div style={{ marginTop: 10 }}>
-                        <p className="review-report-line"><strong>Position after:</strong> {formatEval(movePosition.net_score_centipawns)} · {movePosition.game_phase}</p>
-                        {movePosition.verdict && <p className="review-report-text">{movePosition.verdict}</p>}
-                        {(movePosition.strategic_insights || []).slice(0, 2).map((s, i) => (
-                          <p key={i} className="review-report-text">* {s}</p>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+            <div className="review-board-container">
+              <div className="review-controls-top">
+                {lastMove && (
+                  <span className="review-move-pill">
+                    {Math.floor(currentMoveIdx / 2) + 1}{currentMoveIdx % 2 === 0 ? '.' : '...'} {lastMove.san}
+                    {currentCls && <span className={`badge badge-${currentCls}`} style={{ marginLeft: 8 }}>{currentCls}</span>}
+                  </span>
                 )}
               </div>
-            )}
-          </div>
+              <div className="board-wrapper">
+                <Board2D id="reviewBoard" fen={currentFen} disabled={true} lastMove={lastMoveSq} />
+              </div>
+              <div className="review-controls-bottom">
+                <button
+                  className="btn btn-secondary review-nav-btn"
+                  title="Start"
+                  aria-label="First move"
+                  onClick={() => { setIsPlaying(false); setCurrentMoveIdx(-1); }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                  </svg>
+                </button>
+                <button
+                  className="btn btn-secondary review-nav-btn"
+                  title="Prev"
+                  aria-label="Previous move"
+                  onClick={() => step(-1)}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M18 18l-9-6 9-6v12z" />
+                  </svg>
+                </button>
+                <button
+                  className={`review-play-btn ${isPlaying ? 'playing' : ''}`}
+                  title={isPlaying ? 'Pause' : 'Play'}
+                  aria-label={isPlaying ? 'Pause' : 'Play'}
+                  onClick={handlePlayPause}
+                >
+                  {isPlaying ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                    </svg>
+                  ) : (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '2px' }}>
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  className="btn btn-secondary review-nav-btn"
+                  title="Next"
+                  aria-label="Next move"
+                  onClick={() => step(1)}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 6l9 6-9 6V6z" />
+                  </svg>
+                </button>
+                <button
+                  className="btn btn-secondary review-nav-btn"
+                  title="End"
+                  aria-label="Last move"
+                  onClick={() => { setIsPlaying(false); setCurrentMoveIdx(moves.length - 1); }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 6v12l8.5-6zm10 0h2v12h-2z" />
+                  </svg>
+                </button>
+              </div>
+              <p className="review-hint">Arrow keys to navigate · Space to play/pause</p>
+              {lastMove && (
+                <div className="review-coach-section">
+                  <h3>Move Insight</h3>
+                  {moveInsightBusy && !moveInsight && !movePosition && <p className="review-report-text">Analyzing this move...</p>}
+                  {!moveInsightBusy && !moveInsight && !movePosition && <p className="review-report-text">Play through the game to see coaching notes for each move.</p>}
+                  {(moveInsight || movePosition) && (
+                    <div>
+                      {moveInsight && (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <p className="review-report-line" style={{ margin: 0 }}><strong>Advantages:</strong></p>
+                            <AiTierBadge tier={moveInsight.narrative?.source_tier} source={moveInsight.narrative?.source_label || moveInsight.narrative?.source} pending={moveInsight.narrative?.pending_upgrade} />
+                          </div>
+                          {(moveInsight.thing_1?.reasons || moveInsight.narrative?.advantages || []).slice(0, 3).map((r, i) => (
+                            <p key={i} className="review-report-text">• {typeof r === 'string' ? r : JSON.stringify(r)}</p>
+                          ))}
+                          <p className="review-report-line" style={{ marginTop: 8 }}><strong>Disadvantages:</strong></p>
+                          {(moveInsight.thing_2?.reasons_to_avoid || moveInsight.narrative?.disadvantages || []).slice(0, 3).map((r, i) => (
+                            <p key={i} className="review-report-text">• {r}</p>
+                          ))}
+                          {(!moveInsight.thing_2?.reasons_to_avoid?.length && !moveInsight.narrative?.disadvantages?.length) && (
+                            <p className="review-report-text">• No significant defects.</p>
+                          )}
+                          {moveInsight.best_move?.san && (
+                            <p className="review-report-text" style={{ marginTop: 8 }}>
+                              <strong>Best was:</strong> {moveInsight.best_move.san}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {movePosition && (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <p className="review-report-line" style={{ margin: 0 }}><strong>Position after:</strong> {formatEval(movePosition.net_score_centipawns)} · {movePosition.game_phase}</p>
+                            {movePosition.narrative && (
+                              <AiTierBadge tier={movePosition.narrative?.source_tier} source={movePosition.narrative?.source_label || movePosition.narrative?.source} />
+                            )}
+                          </div>
+                          {movePosition.verdict && <p className="review-report-text">{movePosition.verdict}</p>}
+                          {(movePosition.strategic_insights || []).slice(0, 2).map((s, i) => (
+                            <p key={i} className="review-report-text">* {s}</p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
           {moves.length > 0 && (
             <div className="review-coach-section" ref={reportRef}>
@@ -576,11 +664,11 @@ export default function Review() {
             <MoveList moves={mergedMoves} activeIndex={currentMoveIdx} onMoveClick={(idx) => { setIsPlaying(false); setCurrentMoveIdx(idx); }} />
           </div>
           <div className="review-actions card">
-            <Link to="/history" className="btn btn-secondary" style={{width:'100%',marginBottom:'8px'}}>Match History</Link>
+            <Link to="/history" className="btn btn-secondary" style={{ width: '100%', marginBottom: '8px' }}>Match History</Link>
             {rematchTarget && (
               <button
                 className="btn btn-secondary"
-                style={{width:'100%',marginBottom:'8px'}}
+                style={{ width: '100%', marginBottom: '8px' }}
                 disabled={rematchBusy}
                 onClick={handleRematch}
                 title="Send a rematch challenge"
@@ -588,7 +676,7 @@ export default function Review() {
                 {rematchBusy ? 'Sending...' : '⚔ Rematch Friend'}
               </button>
             )}
-            <Link to="/lobby" className="btn btn-primary" style={{width:'100%'}}>New Game</Link>
+            <Link to="/lobby" className="btn btn-primary" style={{ width: '100%' }}>New Game</Link>
           </div>
         </div>
       </div>

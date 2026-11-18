@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../hooks/useAuth';
-import { gamesApi, createMatchmakingSocket } from '../lib/api';
+import { gamesApi, curriculumApi, createMatchmakingSocket } from '../lib/api';
 import { parsePgn } from '../lib/chessUtils';
+import { useCurriculumStore } from '../store/curriculumStore';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -41,6 +42,16 @@ export default function Lobby() {
 
   const [pendingGameType, setPendingGameType] = useState(null);
   const wsRef = useRef(null);
+
+  const clusters = useCurriculumStore((s) => s.clusters);
+  const fetchProfile = useCurriculumStore((s) => s.fetchProfile);
+  const [targetClusterId, setTargetClusterId] = useState('');
+
+  useEffect(() => {
+    if (token) {
+      fetchProfile();
+    }
+  }, [token, fetchProfile]);
 
   useEffect(() => {
     return () => {
@@ -125,6 +136,17 @@ export default function Lobby() {
         navigate('/paused');
         return;
       }
+      let initialFen = undefined;
+      let clusterId = undefined;
+      if (targetClusterId) {
+        try {
+          const drills = await curriculumApi.getDrills(targetClusterId);
+          if (drills?.positions?.length > 0) {
+            initialFen = drills.positions[0].fen;
+            clusterId = targetClusterId;
+          }
+        } catch (_) {}
+      }
       const { id } = await gamesApi.create({
         mode: 'bot',
         bot_engine: 'stockfish',
@@ -132,6 +154,8 @@ export default function Lobby() {
         player_color: 'white',
         time_control_seconds: 0,
         training_mode: true,
+        ...(initialFen ? { initial_fen: initialFen } : {}),
+        ...(clusterId ? { weakness_cluster_id: clusterId } : {}),
       });
       navigate(`/game/${id}`);
     } catch (err) {
@@ -203,6 +227,36 @@ export default function Lobby() {
             live parameters, candidate moves and a full report at the end.
             Your opponent, playing strength and color are chosen inside the game.
           </p>
+
+          {clusters && clusters.length > 0 && (
+            <div style={{ marginTop: '12px', width: '100%', textAlign: 'left' }}>
+              <label style={{ display: 'block', fontSize: '0.82rem', color: '#94a3b8', marginBottom: '6px' }}>
+                🎯 Target Your Weakness
+              </label>
+              <select
+                value={targetClusterId}
+                onChange={(e) => setTargetClusterId(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  background: 'rgba(15, 23, 42, 0.85)',
+                  color: '#f8fafc',
+                  border: '1px solid rgba(148, 163, 184, 0.25)',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  outline: 'none',
+                }}
+              >
+                <option value="">Full Game (Standard Opening)</option>
+                {clusters.map((c) => (
+                  <option key={c.cluster_id} value={c.cluster_id}>
+                    {c.display_name} ({c.mistake_count} mistakes)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
             <button className="btn-neon interactive" onClick={handleStartPlayGame}

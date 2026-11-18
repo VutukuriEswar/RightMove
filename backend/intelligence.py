@@ -141,129 +141,301 @@ def build_prompt(fen: str, player_move_san: str, best_move_san: str,
         f"- {t.get('move_san')} (eval {t.get('eval_cp', t.get('score_white', '?'))})"
         for t in (top_moves or [])[:3]
     ) or "- (no engine line available)"
-    adv = "\n".join(f"- {a}" for a in (advantages or [])[:4]) or "- none spotted"
-    dis = "\n".join(f"- {d}" for d in (disadvantages or [])[:4]) or "- none spotted"
     eval_line = f"{(eval_cp / 100.0):.2f} pawns" if isinstance(eval_cp, (int, float)) else "n/a"
+    is_best = (best_move_san or "").strip() == (player_move_san or "").strip() or classification in ("Best Move", "Excellent") or cp_loss <= 10
     system = (
-        "You are a friendly chess coach for a club player (~1200). "
-        "Plain everyday language, specific squares and pieces, under 200 words. "
-        "Reply with ONLY the three sections below. Never repeat the questions."
+        "You are a grandmaster chess coach providing direct, factual evaluations for club players.\n"
+        "CRITICAL RULES:\n"
+        "- Output ONLY two sections: ADVANTAGES and DISADVANTAGES.\n"
+        "- Under ADVANTAGES: Provide 1 to 3 short, factual bullet points.\n"
+        "- Under DISADVANTAGES: Provide 1 to 3 short, factual bullet points.\n"
+        "- NEVER include any inner monologue, thinking process, questions, or meta-commentary.\n"
+        "- NEVER question or debate the prompt. Output ONLY factual bullet points starting with - ."
     )
+    if is_best:
+        dis_instruction = "Since this is the engine's best move with no tactical defects, output exactly:\n- No significant defects — maintains an optimal position."
+    else:
+        dis_instruction = "1 to 3 concise bullet points explaining what this move concedes, allows, or weakens."
     user = (
         f"Position (FEN): {fen}\n"
-        f"Played: {player_move_san} ('{classification}', ~{cp_loss:.0f} cp off best). "
-        f"Best was {best_move_san}; eval now {(eval_line)}.\n"
-        f"Engine ideas:\n{top_lines}\nNotes for: {adv}\nAgainst: {dis}\n\n"
-        "VERDICT: one line — good or not, and why in 8 words.\n"
-        "WHY: 2 bullets — what it does, what it gives up.\n"
-        "BETTER PLAN: move to play instead + the simple idea."
+        f"Candidate move: {player_move_san} ({classification}, {cp_loss:.0f} cp loss).\n"
+        f"Engine top move: {best_move_san}; eval: {eval_line}.\n"
+        f"Engine candidate lines:\n{top_lines}\n\n"
+        "ADVANTAGES:\n"
+        "1 to 3 concise bullet points explaining what this move accomplishes (space, piece activity, central control).\n\n"
+        "DISADVANTAGES:\n"
+        f"{dis_instruction}"
     )
     if weakness_context:
         user = f"{weakness_context}\n\n{user}"
     return system, user
 
-_LOCAL_PIPE = {"model_id": None, "pipe": None}
+_IN_FLIGHT_UPGRADES: dict[str, asyncio.Task] = {}
 
 
-_LOCAL_PIPE_LOCK = None
+# Executes tiered move explanation cascade across OpenRouter, Kaggle GPU, and local Ollama
+async def _execute_tiered_move_cascade(system: str, user: str, key: str, rule_fallback: dict) -> dict:
+    from llm_client import (
+        call_openrouter,
+        call_kaggle_ollama,
+        call_local_ollama,
+        format_source_label,
+        get_active_kaggle_url,
+    )
 
-
-# Returns process-wide lock singleton
-def _local_lock():
-    global _LOCAL_PIPE_LOCK
-    if _LOCAL_PIPE_LOCK is None:
-        import threading
-        _LOCAL_PIPE_LOCK = threading.RLock()
-    return _LOCAL_PIPE_LOCK
-
-# Ensures local model snapshot exists on disk
-def _ensure_local_snapshot(model_id: str) -> str:
-    from huggingface_hub import snapshot_download
-    from huggingface_hub.utils import LocalEntryNotFoundError
+    t1_text = None
     try:
-        return snapshot_download(repo_id=model_id, local_files_only=True)
-    except LocalEntryNotFoundError:
-        logger.info(f"[explain] local model '{model_id}' not cached — downloading…")
-        return snapshot_download(repo_id=model_id)
-    except Exception:
-        return snapshot_download(repo_id=model_id)
-
-# Returns singleton local text pipeline
-def _get_local_pipe(model_id: str):
-    from transformers import pipeline
-    with _local_lock():
-        if _LOCAL_PIPE["pipe"] is not None and _LOCAL_PIPE["model_id"] == model_id:
-            return _LOCAL_PIPE["pipe"]
-        _ensure_local_snapshot(model_id)
-        gen = pipeline("text-generation", model=model_id,
-                       max_new_tokens=350, do_sample=False, trust_remote_code=False,
-                       return_full_text=False)
-        try:
-            import torch
-            torch.set_num_threads(max(1, (torch.get_num_threads() or 4) - 2))
-        except Exception:
-            pass
-        _LOCAL_PIPE["model_id"] = model_id
-        _LOCAL_PIPE["pipe"] = gen
-        return gen
-
-# Runs small local fallback model
-def _hf_local_text(system: str, user: str) -> Optional[str]:
-    from core import get_settings
-    settings = get_settings()
-    try:
-        import os as _os
-        from pathlib import Path as _Path
-        _default_cache = str(_Path(__file__).resolve().parent / "models")
-        _os.environ.setdefault("HF_HUB_CACHE", _default_cache)
-        _os.environ.setdefault("HF_HOME", _default_cache)
-        _os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
-        _Path(_default_cache).mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-    try:
-        from transformers import pipeline  # noqa: F401 (ensures dep present)
-    except Exception:
-        logger.info("[explain] transformers not installed — skipping local fallback")
-        return None
-    try:
-        model_id = (settings.hf_local_model_id or "").strip()
-        if not model_id:
-            return None
-        with _local_lock():
-            gen = _get_local_pipe(model_id)
-            out = gen(f"{system}\n\n{user}")
-        text = (out[0].get("generated_text") or "").strip()[:2000].strip()
-        return text or None
+        t1_text = await call_openrouter(system, user, timeout=15.0)
     except Exception as e:
-        logger.info(f"[explain] local model failed: {e}")
-        return None
+        logger.info(f"[explain] Tier 1 (OpenRouter) error: {e}")
+
+    if t1_text and t1_text.strip():
+        adv, dis = _split_sections(t1_text)
+        logger.info("\n" + "#" * 65 + f"\n[CANDIDATE EXPLAIN] -> Advantages & Disadvantages via {format_source_label('openrouter')} (T1)\n" + "#" * 65)
+        return _remember(key, {
+            "text": t1_text,
+            "advantages": adv or rule_fallback["advantages"],
+            "disadvantages": dis or rule_fallback["disadvantages"],
+            "suggestions": dis or rule_fallback["disadvantages"],
+            "source": "ai-cascade",
+            "source_label": "T1",
+            "source_tier": "T1",
+            "pending_upgrade": False,
+        })
+
+    logger.info("[explain] Tier 1 unavailable or failed. Falling to Tier 2 (Kaggle GPU)...")
+    t2_text = None
+    kaggle_url = get_active_kaggle_url()
+    if kaggle_url:
+        try:
+            t2_text = await call_kaggle_ollama(system, user, timeout=30.0)
+        except Exception as e:
+            logger.info(f"[explain] Tier 2 (Kaggle GPU) error: {e}")
+
+    if t2_text and t2_text.strip():
+        adv, dis = _split_sections(t2_text)
+        logger.info("\n" + "#" * 65 + f"\n[CANDIDATE EXPLAIN] -> Advantages & Disadvantages via {format_source_label('kaggle-gpu')} (T2)\n" + "#" * 65)
+        return _remember(key, {
+            "text": t2_text,
+            "advantages": adv or rule_fallback["advantages"],
+            "disadvantages": dis or rule_fallback["disadvantages"],
+            "suggestions": dis or rule_fallback["disadvantages"],
+            "source": "ai-cascade",
+            "source_label": "T2",
+            "source_tier": "T2",
+            "pending_upgrade": False,
+        })
+
+    logger.info("[explain] Tier 2 unavailable or failed. Falling to Tier 3 (Local Ollama)...")
+    try:
+        t3_task = asyncio.create_task(call_local_ollama(system, user, timeout=60.0))
+        done, _ = await asyncio.wait([t3_task], timeout=20.0)
+        if t3_task in done:
+            t3_text = t3_task.result()
+            if t3_text and t3_text.strip():
+                adv, dis = _split_sections(t3_text)
+                logger.info("\n" + "#" * 65 + f"\n[CANDIDATE EXPLAIN] -> Advantages & Disadvantages via {format_source_label('local-ollama')} (T3)\n" + "#" * 65)
+                return _remember(key, {
+                    "text": t3_text,
+                    "advantages": adv or rule_fallback["advantages"],
+                    "disadvantages": dis or rule_fallback["disadvantages"],
+                    "suggestions": dis or rule_fallback["disadvantages"],
+                    "source": "ai-cascade",
+                    "source_label": "T3",
+                    "source_tier": "T3",
+                    "pending_upgrade": False,
+                })
+        else:
+            logger.info("\n" + "#" * 65 + "\n[DISPLAYED ON SITE] -> T3 taking >20s: Showing T4, upgrading to T3 in background\n" + "#" * 65)
+            pending_entry = dict(rule_fallback)
+            pending_entry["pending_upgrade"] = True
+            _remember(key, pending_entry)
+
+            async def _bg_upgrade_t3():
+                try:
+                    res = await t3_task
+                    if res and res.strip():
+                        a, d = _split_sections(res)
+                        logger.info("\n" + "#" * 65 + f"\n[CACHE UPGRADED] -> Live Upgrade from T4 to T3: {format_source_label('local-ollama')} (T3)\n" + "#" * 65)
+                        _remember(key, {
+                            "text": res,
+                            "advantages": a or rule_fallback["advantages"],
+                            "disadvantages": d or rule_fallback["disadvantages"],
+                            "suggestions": d or rule_fallback["disadvantages"],
+                            "source": "ai-cascade",
+                            "source_label": "T3",
+                            "source_tier": "T3",
+                            "pending_upgrade": False,
+                        })
+                    else:
+                        rule_fallback["pending_upgrade"] = False
+                        _remember(key, rule_fallback)
+                except Exception as ex:
+                    logger.debug(f"[explain] T3 background finish failed: {ex}")
+                    rule_fallback["pending_upgrade"] = False
+                    _remember(key, rule_fallback)
+                finally:
+                    _IN_FLIGHT_UPGRADES.pop(key, None)
+
+            _IN_FLIGHT_UPGRADES[key] = asyncio.create_task(_bg_upgrade_t3())
+            return pending_entry
+    except Exception as e:
+        logger.info(f"[explain] Local Ollama error: {e}")
+
+    return _remember(key, rule_fallback)
+
+
+# Executes tiered position evaluation cascade across OpenRouter, Kaggle GPU, and local Ollama
+async def _execute_tiered_position_cascade(system: str, user: str, key: str, rule_text: str, edges: list[str], turn: str) -> dict:
+    from llm_client import (
+        call_openrouter,
+        call_kaggle_ollama,
+        call_local_ollama,
+        format_source_label,
+        get_active_kaggle_url,
+    )
+
+    t1_text = None
+    try:
+        t1_text = await call_openrouter(system, user, timeout=15.0)
+    except Exception as e:
+        logger.info(f"[explain] Position Tier 1 (OpenRouter) error: {e}")
+
+    if t1_text and t1_text.strip():
+        cleaned = _ensure_all_sections(_strip_prompt_echo(_dedupe_echo(t1_text)), rule_text)
+        adv, sug = _split_sections(cleaned)
+        logger.info("\n" + "#" * 65 + f"\n[DISPLAYED ON SITE] -> Position Analysis via {format_source_label('openrouter')} (T1)\n" + "#" * 65)
+        return _remember(key, {
+            "text": cleaned,
+            "advantages": adv or edges[:6],
+            "suggestions": sug or [f"Play around the plan above for {turn}."],
+            "source": "ai-cascade",
+            "source_label": "T1",
+            "source_tier": "T1",
+            "pending_upgrade": False,
+        })
+
+    logger.info("[explain] Position Tier 1 unavailable or failed. Falling to Tier 2 (Kaggle GPU)...")
+    t2_text = None
+    kaggle_url = get_active_kaggle_url()
+    if kaggle_url:
+        try:
+            t2_text = await call_kaggle_ollama(system, user, timeout=30.0)
+        except Exception as e:
+            logger.info(f"[explain] Position Tier 2 (Kaggle GPU) error: {e}")
+
+    if t2_text and t2_text.strip():
+        cleaned = _ensure_all_sections(_strip_prompt_echo(_dedupe_echo(t2_text)), rule_text)
+        adv, sug = _split_sections(cleaned)
+        logger.info("\n" + "#" * 65 + f"\n[DISPLAYED ON SITE] -> Position Analysis via {format_source_label('kaggle-gpu')} (T2)\n" + "#" * 65)
+        return _remember(key, {
+            "text": cleaned,
+            "advantages": adv or edges[:6],
+            "suggestions": sug or [f"Play around the plan above for {turn}."],
+            "source": "ai-cascade",
+            "source_label": "T2",
+            "source_tier": "T2",
+            "pending_upgrade": False,
+        })
+
+    logger.info("[explain] Position Tier 2 unavailable or failed. Falling to Tier 3 (Local Ollama)...")
+    try:
+        t3_task = asyncio.create_task(call_local_ollama(system, user, timeout=60.0))
+        done, _ = await asyncio.wait([t3_task], timeout=20.0)
+        if t3_task in done:
+            t3_text = t3_task.result()
+            if t3_text and t3_text.strip():
+                cleaned = _ensure_all_sections(_strip_prompt_echo(_dedupe_echo(t3_text)), rule_text)
+                adv, sug = _split_sections(cleaned)
+                logger.info("\n" + "#" * 65 + f"\n[DISPLAYED ON SITE] -> Position Analysis via {format_source_label('local-ollama')} (T3)\n" + "#" * 65)
+                return _remember(key, {
+                    "text": cleaned,
+                    "advantages": adv or edges[:6],
+                    "suggestions": sug or [f"Play around the plan above for {turn}."],
+                    "source": "ai-cascade",
+                    "source_label": "T3",
+                    "source_tier": "T3",
+                    "pending_upgrade": False,
+                })
+        else:
+            logger.info("\n" + "#" * 65 + "\n[DISPLAYED ON SITE] -> Position T3 >20s: Showing T4, upgrading in background\n" + "#" * 65)
+            fallback_dict = {
+                "text": rule_text,
+                "advantages": edges[:6],
+                "suggestions": [f"Play around the plan above for {turn}."],
+                "source": "rule-based",
+                "source_label": "T4",
+                "source_tier": "T4",
+                "pending_upgrade": True,
+            }
+            _remember(key, fallback_dict)
+
+            async def _bg_pos_t3():
+                try:
+                    res = await t3_task
+                    if res and res.strip():
+                        c = _ensure_all_sections(_strip_prompt_echo(_dedupe_echo(res)), rule_text)
+                        a, s = _split_sections(c)
+                        logger.info("\n" + "#" * 65 + f"\n[CACHE UPGRADED] -> Live Upgrade Position from T4 to T3: {format_source_label('local-ollama')} (T3)\n" + "#" * 65)
+                        _remember(key, {
+                            "text": c,
+                            "advantages": a or edges[:6],
+                            "suggestions": s or [f"Play around the plan above for {turn}."],
+                            "source": "ai-cascade",
+                            "source_label": "T3",
+                            "source_tier": "T3",
+                            "pending_upgrade": False,
+                        })
+                    else:
+                        fallback_dict["pending_upgrade"] = False
+                        _remember(key, fallback_dict)
+                except Exception as ex:
+                    logger.debug(f"[explain] T3 position background finish failed: {ex}")
+                    fallback_dict["pending_upgrade"] = False
+                    _remember(key, fallback_dict)
+                finally:
+                    _IN_FLIGHT_UPGRADES.pop(key, None)
+
+            _IN_FLIGHT_UPGRADES[key] = asyncio.create_task(_bg_pos_t3())
+            return fallback_dict
+    except Exception as e:
+        logger.info(f"[explain] Position Local Ollama error: {e}")
+
+    return _remember(key, {
+        "text": rule_text,
+        "advantages": edges[:6],
+        "suggestions": [f"Play around the plan above for {turn}."],
+        "source": "rule-based",
+        "source_label": "T4",
+        "source_tier": "T4",
+        "pending_upgrade": False,
+    })
 
 # Builds offline fallback from engine numbers
 def _rule_based_text(player_move_san: str, best_move_san: str, classification: str,
                      cp_loss: float, advantages: list[str],
                      disadvantages: list[str]) -> dict:
-    verdict = {
-        "Best Move": f"VERDICT: {player_move_san} is the best move — nothing to fix.",
-        "Excellent": f"VERDICT: {player_move_san} is excellent — basically the best idea.",
-        "Good": f"VERDICT: {player_move_san} is good — sound, just not the sharpest.",
-        "Inaccuracy": f"VERDICT: {player_move_san} is slightly off — it gives away a small edge.",
-        "Mistake": f"VERDICT: {player_move_san} is a mistake — it hands the initiative over.",
-        "Blunder": f"VERDICT: {player_move_san} is a blunder — it likely changes who is winning.",
-    }.get(classification, f"VERDICT: {player_move_san} — {classification}.")
-    why = [f"• {a}" for a in (advantages or [])[:2]]
-    why += [f"• Watch out: {d}" for d in (disadvantages or [])[:2]]
-    if not why:
-        why = ["• No standout positional swing either way."]
-    better = (f"BETTER PLAN: play {best_move_san} instead — it keeps about "
-              f"{cp_loss:.0f} centipawns more of your advantage. "
-              f"Ask before every move: what does it threaten, and what does it leave hanging?")
-    if classification in ("Best Move", "Excellent") or (best_move_san or "") == (player_move_san or ""):
-        better = ("BETTER PLAN: you already found it — replay why this square matters "
-                  "(control, safety, or a threat) so you spot it faster next time.")
-    text = f"{verdict}\nWHY:\n" + "\n".join(why) + f"\n{better}"
-    return {"text": text, "advantages": list(advantages or [])[:6],
-            "suggestions": [better], "source": "rule-based"}
+    adv_list = [a for a in (advantages or []) if a]
+    if not adv_list:
+        adv_list = [f"Develops {player_move_san} and contests key central squares."]
+
+    dis_list = [d for d in (disadvantages or []) if d]
+    if not dis_list:
+        if (best_move_san or "") == (player_move_san or "") or classification in ("Best Move", "Excellent"):
+            dis_list = ["No significant defects — maintains tactical stability."]
+        else:
+            dis_list = [f"Concedes roughly {cp_loss:.0f} centipawns compared to best move {best_move_san}."]
+
+    text = "ADVANTAGES:\n" + "\n".join(f"• {a}" for a in adv_list[:3]) + "\n\nDISADVANTAGES:\n" + "\n".join(f"• {d}" for d in dis_list[:3])
+    return {
+        "text": text,
+        "advantages": adv_list[:3],
+        "disadvantages": dis_list[:3],
+        "suggestions": dis_list[:3],
+        "source": "rule-based",
+        "source_label": "T4",
+        "source_tier": "T4",
+    }
 
 # Collapses repeated echo lines preserving order
 def _dedupe_echo(text: str) -> str:
@@ -324,30 +496,57 @@ def _ensure_all_sections(ai_text: str, rule_text: str) -> str:
         parts.append(f"{h}:\n{body}" if body else f"{h}:")
     return "\n".join(parts).strip()
 
-# Splits prose into advantages and suggestions
+# Splits prose into advantages and disadvantages
 def _split_sections(text: str) -> tuple[list[str], list[str]]:
-    advantages, suggestions = [], []
+    if not text:
+        return [], []
+    cleaned_text = re.sub(r"(?is)<think>.*?</think>", "", text)
+    advantages, disadvantages = [], []
     cur = None
-    for line in text.splitlines():
-        up = line.strip().upper()
-        if up.startswith("WHY"):
+    reasoning_leak_patterns = [
+        r"\?",
+        r"\bactually\b",
+        r"\bwait\b",
+        r"\bi should\b",
+        r"\bi need\b",
+        r"\bi can\b",
+        r"\bi will\b",
+        r"\binstructions\b",
+        r"\bhmm\b",
+        r"\bambiguous\b",
+        r"\btemplate\b",
+        r"\bfor a \d+\b",
+        r"\blet me\b",
+        r"\blet's\b",
+        r"\bmodel\b",
+        r"\bprompt\b",
+    ]
+    reasoning_regex = re.compile("|".join(reasoning_leak_patterns), re.IGNORECASE)
+    for line in cleaned_text.splitlines():
+        trimmed = line.strip()
+        up = trimmed.upper()
+        if up.startswith("ADVANTAGE") or up.startswith("WHY"):
             cur = advantages
             continue
-        if up.startswith("BETTER PLAN") or up.startswith("SUGGEST"):
-            cur = suggestions
+        if up.startswith("DISADVANTAGE") or up.startswith("DEFECT") or up.startswith("BETTER PLAN") or up.startswith("SUGGEST") or up.startswith("DRAWBACK"):
+            cur = disadvantages
             continue
-        if up.startswith("VERDICT"):
+        if up.startswith("VERDICT") or not trimmed:
             continue
-        clean = re.sub(r"^[\-•*\d.)\s]+", "", line.strip())
-        if clean and cur is not None:
+        if cur is None:
+            continue
+        if reasoning_regex.search(trimmed):
+            continue
+        clean = re.sub(r"^[\-•*\d.)\s]+", "", trimmed).strip()
+        if clean and len(clean) > 3:
             cur.append(clean)
-    return advantages[:6], suggestions[:4]
+    return advantages[:3], disadvantages[:3]
 
-# Checks whether HF explanations are enabled
+# Checks whether AI explanations are enabled
 def _hf_enabled() -> bool:
     try:
         from core import get_settings
-        return bool(get_settings().hf_explanations_enabled)
+        return bool(get_settings().ai_explanations_enabled)
     except Exception:
         return True
 
@@ -390,20 +589,12 @@ async def explain_move_rich(fen: str, player_move_san: str, best_move_san: str,
     rule_fallback = _rule_based_text(player_move_san, best_move_san, classification,
                                        cp_loss, advantages, disadvantages)
     if not _hf_enabled():
+        logger.info("\n" + "#" * 65 + "\n[DISPLAYED ON SITE] -> Prewritten Heuristics (AI disabled in .env)\n" + "#" * 65)
         return _remember(key, rule_fallback)
     try:
-        import asyncio
-        text = await asyncio.wait_for(asyncio.to_thread(_hf_local_text, system, user), timeout=180)
-        if text:
-            text = _ensure_all_sections(
-                _strip_prompt_echo(_dedupe_echo(text)), rule_fallback["text"])
-            adv, sug = _split_sections(text)
-            return _remember(key, {"text": text,
-                                   "advantages": adv or advantages[:6],
-                                   "suggestions": sug or [f"Consider {best_move_san}."],
-                                   "source": "hf-local"})
+        return await _execute_tiered_move_cascade(system, user, key, rule_fallback)
     except Exception as e:
-        logger.info(f"[explain] local path failed: {e}")
+        logger.info(f"[explain] AI cascade failed: {e}")
     return _remember(key, rule_fallback)
 
 # Explains static position with rich narrative
@@ -437,22 +628,14 @@ async def explain_position_rich(fen: str, verdict: str,
     if not _hf_enabled():
         return _remember(key, {"text": rule_text, "advantages": edges[:6],
                                "suggestions": [f"Play around the plan above for {turn}."],
-                               "source": "rule-based"})
+                               "source": "rule-based", "source_label": "T4", "source_tier": "T4", "pending_upgrade": False})
     try:
-        import asyncio
-        text = await asyncio.wait_for(asyncio.to_thread(_hf_local_text, system, user), timeout=180)
-        if text:
-            text = _ensure_all_sections(
-                _strip_prompt_echo(_dedupe_echo(text)), rule_text)
-            adv, sug = _split_sections(text)
-            return _remember(key, {"text": text,
-                                   "advantages": adv or edges[:6],
-                                   "suggestions": sug or [f"Play around the plan above for {turn}."],
-                                   "source": "hf-local"})
+        return await _execute_tiered_position_cascade(system, user, key, rule_text, edges, turn)
     except Exception as e:
         logger.info(f"[explain] local position path failed: {e}")
     return _remember(key, {"text": rule_text, "advantages": edges[:6],
-                           "suggestions": [f"Play around the plan above for {turn}."], "source": "rule-based"})
+                           "suggestions": [f"Play around the plan above for {turn}."],
+                           "source": "rule-based", "source_label": "T4", "source_tier": "T4", "pending_upgrade": False})
 
 # Section coaching/tactical_analysis
 

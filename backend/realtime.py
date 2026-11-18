@@ -126,9 +126,12 @@ class GameState:
         self.time_control = game_doc.get("time_control_seconds", 600) * 1000
         self.increment = game_doc.get("increment_seconds", 0) * 1000
 
-        if game_doc.get("fen"):
+        start_fen = game_doc.get("initial_fen") or game_doc.get("fen")
+        if start_fen:
             try:
-                self.board = chess.Board(game_doc["fen"])
+                self.board = chess.Board(start_fen)
+                if not game_doc.get("player_color"):
+                    self.player_color = "white" if self.board.turn == chess.WHITE else "black"
             except Exception:
                 self.board = chess.Board()
         else:
@@ -527,6 +530,9 @@ async def handle_game_socket(
                         state.last_move_time = time.time()
                     state.clock_running = True
                     _ensure_clock_task(game_id, state)
+                    if state.mode == "bot" and len(state.moves) == 0:
+                        if _side_to_move(state) != state.player_color and not state.result:
+                            asyncio.create_task(_bot_reply(game_id, state))
                 else:
                     # Multiplayer: wait for both players to be ready
                     state.ready_players.add(user_id)

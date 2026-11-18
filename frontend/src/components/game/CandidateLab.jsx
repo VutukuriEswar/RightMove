@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, Fragment, Component } from 'react';
 import Board2D from '../board/Board2D';
 import { coachApi } from '../../lib/api';
+import AiTierBadge from '../shared/AiTierBadge';
 
 const RANK_MEDALS = ['🥇', '🥈', '🥉'];
 const MAX_COUNT = 20;
@@ -200,6 +201,40 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
       setExplainBusy(false);
     }
   }, [baseFen, candidates]);
+
+  useEffect(() => {
+    if (!explain || !explain.narrative?.pending_upgrade) return;
+    const targetUci = explain._forUci;
+    const targetFen = explain._forFen;
+    let active = true;
+
+    const interval = setInterval(async () => {
+      try {
+        const bestUci = candidates.length > 0 ? candidates[0].move_uci : null;
+        const res = await coachApi.explain(targetFen, targetUci, bestUci, 0, null);
+        if (!active) return;
+        if (res && res.narrative && (!res.narrative.pending_upgrade || res.narrative.source_tier !== 'T4')) {
+          setExplain((prev) => {
+            if (prev && prev._forUci === targetUci && prev._forFen === targetFen) {
+              return { ...res, _forUci: targetUci, _forFen: targetFen };
+            }
+            return prev;
+          });
+          clearInterval(interval);
+        }
+      } catch (_) {}
+    }, 1500);
+
+    const timer = setTimeout(() => {
+      clearInterval(interval);
+    }, 55000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      clearTimeout(timer);
+    };
+  }, [explain, candidates]);
 
   const runDeepLine = useCallback(async () => {
     if (!selected || simBusy) return;
@@ -514,33 +549,38 @@ export default function CandidateLab({ fen, playerColor = 'white', canPlay = fal
                       {explainBusy && <p className="lab-empty">Explaining {selected.move_san}…</p>}
                       {explainError && <div className="alert alert-error" style={{ fontSize: '0.75rem' }}>{explainError}</div>}
                       {explain && !explainBusy && (() => {
-                        const thing1Title = renderText(explain.thing_1?.title) || 'Strategic Purpose & Goals';
-                        const thing1Summary = renderText(explain.thing_1?.summary);
                         const thing1Reasons = (explain.thing_1?.reasons || explain.narrative?.advantages || [])
                           .map(renderText)
-                          .filter((r) => r && r !== thing1Summary);
+                          .filter(Boolean)
+                          .slice(0, 3);
 
-                        const thing2Title = renderText(explain.thing_2?.title) || 'Move Defects & Flaws';
-                        const thing2Summary = renderText(explain.thing_2?.summary);
-                        const thing2Reasons = (explain.thing_2?.reasons_to_avoid || [])
+                        const thing2Reasons = (explain.thing_2?.reasons_to_avoid || explain.narrative?.disadvantages || [])
                           .map(renderText)
-                          .filter((r) => r && r !== thing2Summary);
+                          .filter(Boolean)
+                          .slice(0, 3);
+
+                        const sourceLabel = explain.narrative?.source_label || (explain.narrative?.source === 'ai-cascade' ? 'AI Coach' : 'Heuristics');
 
                         return (
                           <>
                             <div className="lab-pros-cons">
-                              <h5>✅ ADVANTAGES</h5>
-                              <p><strong>{thing1Title}</strong></p>
-                              {thing1Summary && <p>{thing1Summary}</p>}
-                              {thing1Reasons.map((r, i) => <p key={i}>• {r}</p>)}
-                              {!thing1Summary && thing1Reasons.length === 0 && <p>Occupies key squares and maintains tactical stability.</p>}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                <h5>✅ ADVANTAGES</h5>
+                                <AiTierBadge tier={explain.narrative?.source_tier} source={sourceLabel} pending={explain.narrative?.pending_upgrade} />
+                              </div>
+                              {thing1Reasons.length > 0 ? (
+                                thing1Reasons.map((r, i) => <p key={i}>• {r}</p>)
+                              ) : (
+                                <p>• Occupies key squares and controls central lines.</p>
+                              )}
                             </div>
                             <div className="lab-pros-cons cons">
                               <h5>⚠️ DISADVANTAGES</h5>
-                              <p><strong>{thing2Title}</strong></p>
-                              {thing2Summary && <p>{thing2Summary}</p>}
-                              {thing2Reasons.map((r, i) => <p key={i}>• {r}</p>)}
-                              {!thing2Summary && thing2Reasons.length === 0 && <p>This move has no defects.</p>}
+                              {thing2Reasons.length > 0 ? (
+                                thing2Reasons.map((r, i) => <p key={i}>• {r}</p>)
+                              ) : (
+                                <p>• This move has no significant defects.</p>
+                              )}
                             </div>
                           </>
                         );

@@ -24,7 +24,7 @@ def compute_health(cluster_id: str, srs_records: list, game_mistakes: list) -> f
     def extract_date(m):
         dt = m.get("game_date") or m.get("created_at")
         if isinstance(dt, datetime):
-            return dt
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
         return datetime.min.replace(tzinfo=timezone.utc)
 
     sorted_m = sorted(game_mistakes, key=extract_date)
@@ -154,7 +154,13 @@ async def get_drill_queue(user_id: str, cluster_filter: str | None = None) -> li
     for cluster_id, recs in per_cluster.items():
         queue += recs[:3]
 
-    queue.sort(key=lambda r: r.get("next_review_at") or now)
+    def _drill_sort_key(r):
+        dt = r.get("next_review_at")
+        if isinstance(dt, datetime):
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+        return now
+
+    queue.sort(key=_drill_sort_key)
     selected = queue[:12]
 
     cluster_ids = list(set(r["cluster_id"] for r in selected))

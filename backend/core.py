@@ -2,6 +2,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
@@ -12,7 +13,11 @@ from pydantic import BaseModel, EmailStr, Field
 
 # Defines application configuration settings
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(".env", str(Path(__file__).resolve().parent / ".env")),
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 10080
@@ -48,8 +53,15 @@ class Settings(BaseSettings):
     rate_limit_api: str = "120/minute"
 
 
-    hf_explanations_enabled: bool = True
-    hf_local_model_id: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    ai_explanations_enabled: bool = True
+    openrouter_api_key: str = ""
+    openrouter_model: str = "nvidia/nemotron-3.5-super-vl:free"
+    kaggle_tunnel_url: str = ""
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5:7b"
+    llm_tunnel_secret: str = "rightmove-tunnel-secret"
+    llm_timeout_seconds: float = 60.0
+    llm_fast_fallback_timeout: float = 5.0
 
 
     # Configures live broadcast and Stockfish analysis options

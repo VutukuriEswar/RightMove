@@ -9,6 +9,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Normalizes datetime to UTC timezone-aware
+def to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    return None
+
+
 # Models individual mistake position with extracted features
 class MistakePosition(BaseModel):
     id: Optional[str] = Field(None, alias="_id")

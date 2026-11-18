@@ -115,5 +115,7 @@ def check_agent_trigger(cluster: dict) -> bool:
         return True
     if trend == "increasing":
         return True
+    if last_reported and last_reported.tzinfo is None:
+        last_reported = last_reported.replace(tzinfo=timezone.utc)
     days = (now - last_reported).days
     return days >= 14 and since_report >= 5

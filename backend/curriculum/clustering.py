@@ -194,6 +194,8 @@ async def upsert_clusters(user_id: str, clusters_data: list, all_mistakes: list,
         since_rep = cluster.get("mistake_count_since_report", 0)
         trend = cluster.get("mistake_rate_trend", "stable")
 
+        if last_rep and last_rep.tzinfo is None:
+            last_rep = last_rep.replace(tzinfo=timezone.utc)
         days_since_rep = (now - last_rep).days if last_rep else 999
         should_report = (
             mistake_cnt >= 10 and (

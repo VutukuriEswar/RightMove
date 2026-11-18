@@ -10,6 +10,7 @@ from curriculum.models import (
     ClusterWithHealth,
     DrillSubmitRequest,
     DrillSubmitResponse,
+    to_utc,
 )
 from curriculum.srs import (
     compute_health,
@@ -71,7 +72,7 @@ async def get_curriculum_profile(current_user: dict = Depends(get_current_user))
 
         pending_for_cluster = sum(
             1 for r in srs_records
-            if r.get("next_review_at") and r["next_review_at"] <= now
+            if to_utc(r.get("next_review_at")) and to_utc(r["next_review_at"]) <= now
         )
 
         latest_rep = await db.weakness_reports.find_one(
@@ -182,7 +183,8 @@ async def submit_drill(
         {"user_id": user_id},
         sort=[("session_date", -1)]
     )
-    is_recent = recent_session and (now - recent_session["session_date"]).total_seconds() < 1800
+    s_date = to_utc(recent_session.get("session_date")) if recent_session else None
+    is_recent = s_date and (now - s_date).total_seconds() < 1800
 
     if is_recent:
         await db.drill_sessions.update_one(

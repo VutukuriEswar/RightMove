@@ -11,7 +11,10 @@ _TORCH_MODULES = [
 ]
 for _mod in _TORCH_MODULES:
     if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
+        _mock = MagicMock()
+        if _mod == "torch":
+            _mock.Tensor = type("Tensor", (), {})
+        sys.modules[_mod] = _mock
 
 
 @pytest.fixture(autouse=True)

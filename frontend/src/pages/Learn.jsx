@@ -526,7 +526,7 @@ export default function Learn() {
               ))}
             </div>
             {game && (
-                <div className="lab-split">
+              <div className="lab-split">
                 <div className="lab-board">
                   <Board2D id="pgnLabBoard" fen={boardFen} disabled playerColor="white"
                     lastMove={move ? { from: move.uci.slice(0, 2), to: move.uci.slice(2, 4) } : null} />

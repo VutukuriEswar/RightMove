@@ -63,6 +63,12 @@ async def lifespan(app: FastAPI):
         pass
 
     try:
+        from llm_client import ensure_local_ollama_model
+        asyncio.create_task(ensure_local_ollama_model(settings.ollama_base_url, settings.ollama_model))
+    except Exception:
+        pass
+
+    try:
         await init_broadcast_worker()
     except Exception as e:
         logger.warning(f"[broadcasts] worker failed to start: {e}")
@@ -133,6 +139,7 @@ app.add_middleware(
 app.include_router(api_router)
 app.include_router(curriculum_router, prefix="/api/curriculum")
 app.include_router(curriculum_internal_router, prefix="/internal")
+app.include_router(curriculum_internal_router, prefix="/api/internal")
 
 
 # Exposes WebSocket endpoints

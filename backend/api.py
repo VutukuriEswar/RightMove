@@ -1946,6 +1946,20 @@ async def explain_move(req: MoveExplainRequest):
                 disadvantages=_thing2.get("defects") or ([_thing2.get("summary")] if _thing2.get("summary") else []),
                 user_id=req.user_id,
             )
+            ai_adv = result["narrative"].get("advantages") or []
+            ai_dis = result["narrative"].get("disadvantages") or []
+            if ai_adv:
+                if "thing_1" not in result:
+                    result["thing_1"] = {}
+                result["thing_1"]["summary"] = ai_adv[0]
+                result["thing_1"]["reasons"] = ai_adv
+            if ai_dis:
+                if "thing_2" not in result:
+                    result["thing_2"] = {}
+                result["thing_2"]["summary"] = ai_dis[0]
+                result["thing_2"]["reasons_to_avoid"] = ai_dis
+                result["thing_2"]["has_defects"] = any("no defect" not in d.lower() and "no significant defect" not in d.lower() for d in ai_dis)
+            result["pending_upgrade"] = bool(result.get("narrative", {}).get("pending_upgrade", False))
         except Exception as e:
             logger.info(f"[coach] narrative skipped: {e}")
         return result
