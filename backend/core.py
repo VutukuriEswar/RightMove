@@ -49,10 +49,6 @@ class Settings(BaseSettings):
     admin_password: str = "CHANGE_ME_IN_PRODUCTION"
 
 
-    rate_limit_auth: str = "10/minute"
-    rate_limit_api: str = "120/minute"
-
-
     ai_explanations_enabled: bool = True
     openrouter_api_key: str = ""
     openrouter_model: str = "nvidia/nemotron-3.5-super-vl:free"

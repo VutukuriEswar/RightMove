@@ -326,6 +326,8 @@ Large PGN uploads use an adaptive budget: while MongoDB is under its configured 
 
 Live Events use the free public **Lichess Broadcast API** with no paid key. Responses are cached in-process (with stale fallback during rate limits), finished games from live/upcoming/recent events and any tournament a user opens are queued for analysis, and a dedicated single-threaded Stockfish process handles the queue so normal play is never starved. Analyses are stored globally in MongoDB and shown to every visitor; the daily budget only throttles automatic jobs, while logged-in users can always request a game manually.
 
+RightMove does **not** rate-limit requests itself. There is no per-IP middleware or API throttling in the backend, so long sessions, heavy polling and users sharing a single NAT/office IP are never blocked by the app. If you deploy publicly and want abuse protection, enforce it upstream instead — nginx `limit_req`, Cloudflare Rate Limiting/WAF, or your cloud provider's edge rules — so the limits stay outside the application code.
+
 ## License
 
 The RightMove application code is licensed under the **MIT License** — see the [LICENSE](./LICENSE) file for details.
